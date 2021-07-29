@@ -1,77 +1,86 @@
 import brownie
 from brownie import Contract
+import pytest
+from utils import actions, checks
 
 
-def test_operation(accounts, token, vault, strategy, strategist, amount):
+def test_operation(
+    chain, accounts, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+):
     # Deposit to the vault
-    token.approve(vault.address, amount, {"from": accounts[0]})
-    vault.deposit(amount, {"from": accounts[0]})
-    assert token.balanceOf(vault.address) == amount
+    user_balance_before = token.balanceOf(user)
+    actions.user_deposit(user, vault, token, amount)
 
     # harvest
-    strategy.harvest()
-    assert token.balanceOf(strategy.address) == amount
+    chain.sleep(1)
+    strategy.harvest({"from": strategist})
+    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
     # tend()
-    strategy.tend()
+    strategy.tend({"from": strategist})
 
     # withdrawal
-    vault.withdraw({"from": accounts[0]})
-    assert token.balanceOf(accounts[0]) != 0
+    vault.withdraw({"from": user})
+    assert (
+        pytest.approx(token.balanceOf(user), rel=RELATIVE_APPROX) == user_balance_before
+    )
 
 
-def test_emergency_exit(accounts, token, vault, strategy, strategist, amount):
+def test_emergency_exit(
+    chain, accounts, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+):
     # Deposit to the vault
-    token.approve(vault.address, amount, {"from": accounts[0]})
-    vault.deposit(amount, {"from": accounts[0]})
-    strategy.harvest()
-    assert token.balanceOf(strategy.address) == amount
+    actions.user_deposit(user, vault, token, amount)
+    chain.sleep(1)
+    strategy.harvest({"from": strategist})
+    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
     # set emergency and exit
     strategy.setEmergencyExit()
-    strategy.harvest()
-    assert token.balanceOf(strategy.address) < amount
+    chain.sleep(1)
+    strategy.harvest({"from": strategist})
+    assert strategy.estimatedTotalAssets() < amount
 
 
-def test_profitable_harvest(accounts, token, vault, strategy, strategist, amount):
-    # Deposit to the vault
-    token.approve(vault.address, amount, {"from": accounts[0]})
-    vault.deposit(amount, {"from": accounts[0]})
-    assert token.balanceOf(vault.address) == amount
-
-    # harvest
-    strategy.harvest()
-    assert token.balanceOf(strategy.address) == amount
-
-    # You should test that the harvest method is capable of making a profit.
-    # TODO: uncomment the following lines.
-    # strategy.harvest()
-    # chain.sleep(3600 * 24)
-    # assert token.balanceOf(strategy.address) > amount
-
-
-def test_change_debt(gov, token, vault, strategy, strategist, amount):
+def test_increase_debt_ratio(
+    chain, gov, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+):
     # Deposit to the vault and harvest
-    token.approve(vault.address, amount, {"from": gov})
-    vault.deposit(amount, {"from": gov})
+    actions.user_deposit(user, vault, token, amount)
     vault.updateStrategyDebtRatio(strategy.address, 5_000, {"from": gov})
-    strategy.harvest()
+    chain.sleep(1)
+    strategy.harvest({"from": strategist})
+    half = int(amount / 2)
 
-    assert token.balanceOf(strategy.address) == amount / 2
+    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == half
 
     vault.updateStrategyDebtRatio(strategy.address, 10_000, {"from": gov})
-    strategy.harvest()
-    assert token.balanceOf(strategy.address) == amount
-
-    # In order to pass this tests, you will need to implement prepareReturn.
-    # TODO: uncomment the following lines.
-    # vault.updateStrategyDebtRatio(strategy.address, 5_000, {"from": gov})
-    # assert token.balanceOf(strategy.address) == amount / 2
+    chain.sleep(1)
+    strategy.harvest({"from": strategist})
+    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
 
-def test_sweep(gov, vault, strategy, token, amount, weth, weth_amout):
+def test_decrease_debt_ratio(
+    chain, gov, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+):
+    # Deposit to the vault and harvest
+    actions.user_deposit(user, vault, token, amount)
+    vault.updateStrategyDebtRatio(strategy.address, 10_000, {"from": gov})
+    chain.sleep(1)
+    strategy.harvest({"from": strategist})
+
+    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
+
+    vault.updateStrategyDebtRatio(strategy.address, 5_000, {"from": gov})
+    chain.sleep(1)
+    strategy.harvest({"from": strategist})
+    half = int(amount / 2)
+    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == half
+
+
+def test_sweep(gov, vault, strategy, token, user, amount, weth, weth_amount):
     # Strategy want token doesn't work
-    token.transfer(strategy, amount, {"from": gov})
+    token.transfer(strategy, amount, {"from": user})
     assert token.address == strategy.want()
     assert token.balanceOf(strategy) > 0
     with brownie.reverts("!want"):
@@ -86,18 +95,19 @@ def test_sweep(gov, vault, strategy, token, amount, weth, weth_amout):
     # with brownie.reverts("!protected"):
     #     strategy.sweep(strategy.protectedToken(), {"from": gov})
 
-    weth.transfer(strategy, weth_amout, {"from": gov})
+    before_balance = weth.balanceOf(gov)
+    weth.transfer(strategy, weth_amount, {"from": user})
     assert weth.address != strategy.want()
-    assert weth.balanceOf(gov) == 0
+    assert weth.balanceOf(user) == 0
     strategy.sweep(weth, {"from": gov})
-    assert weth.balanceOf(gov) == weth_amout
+    assert weth.balanceOf(gov) == weth_amount + before_balance
 
 
-def test_triggers(gov, vault, strategy, token, amount, weth, weth_amout):
+def test_triggers(chain, gov, vault, strategy, token, amount, user, strategist):
     # Deposit to the vault and harvest
-    token.approve(vault.address, amount, {"from": gov})
-    vault.deposit(amount, {"from": gov})
+    actions.user_deposit(user, vault, token, amount)
     vault.updateStrategyDebtRatio(strategy.address, 5_000, {"from": gov})
+    chain.sleep(1)
     strategy.harvest()
 
     strategy.harvestTrigger(0)

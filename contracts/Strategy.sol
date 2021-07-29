@@ -41,6 +41,7 @@ contract Strategy is BaseStrategy {
 
     uint256 public minWant;
     uint256 public minRatio;
+    uint256 public minCompToSell;
     uint256 public maxIterations;
 
     // TODO: review decimals
@@ -53,16 +54,51 @@ contract Strategy is BaseStrategy {
         // debtThreshold = 0;
     }
 
-    // ******** OVERRIDE THESE METHODS FROM BASE CONTRACT ************
+    // SETTERS
+    // TODO: add setters for thesholds
 
     function name() external view override returns (string memory) {
-        // Add your own name here, suggestion e.g. "StrategyCreamYFI"
-        return "Strategy<ProtocolName><TokenType>";
+        return "StrategyGenLevCOMP";
     }
 
     function estimatedTotalAssets() public view override returns (uint256) {
-        // TODO: Build a more accurate estimate using the value of all positions in terms of `want`
-        return want.balanceOf(address(this));
+        (uint256 deposits, uint256 borrows, ) = getCurrentPosition();
+        uint256 netAssets = deposits.sub(borrows);
+        uint256 rewards = estimatedRewardsInWant();
+
+        return netAssets.add(rewards);
+    }
+
+    function estimateRewardsInWant() public view returns (uint256) {
+        // NOTE: assuming 15s between blocks
+        // NOTE: no problem in using block.timestamp. no decisions are taken using this
+        uint256 blocksSinceLastReport = lastReport.sub(block.timestamp).div(15);
+
+        // Amount of COMP that suppliers AND borrowers receive
+        uint256 compSpeed = compound.compSpeeds(address(cToken));
+
+        (uint256 deposits, uint256 borrows, ) = getCurrentPosition();
+
+        // NOTE: using 1e18 because exchangeRate has 18 decimals
+        // TODO: check that exchangeRate always has 18 decimals
+        uint256 totalDeposits = cToken.totalSupply().mul(cToken.exchangeRateStored()).div(1e18);
+        uint256 totalBorrows = cToken.totalBorrows();
+        // Shortcut if no deposits / (== no borrows)
+        if(totalDeposits == 0 || deposits == 0) {
+            return 0;
+        }
+        // NOTE: compSpeed is the same for borrows and deposits
+        uint256 supplyShare = deposits.mul(DECIMALS).div(totalDeposits);
+        uint256 supplyRewards = supplyShare.mul(compSpeed).mul(blocksSinceLastReport);
+        // Shortcut if no borrows
+        if (totalBorrows == 0 || borrows == 0) {
+            return toWant(supplyRewards);
+        }
+
+        uint256 borrowShare = borrows.mul(DECIMALS).div(totalBorrows);
+        uint256 borrowRewards = borrowShare.mul(compSpeed).mul(blocksSinceLastReport);
+
+        return toWant(supplyRewards.add(borrowRewards));
     }
 
     function prepareReturn(uint256 _debtOutstanding)
@@ -125,7 +161,6 @@ contract Strategy is BaseStrategy {
     function adjustPosition(uint256 _debtOutstanding) internal override {
         uint256 wantBalance = balanceOfWant();
         // deposit available want as collateral
-        // TODO: create minWant state variable
         if(wantBalance > _debtOutstanding && wantBalance.sub(_debtOutstanding) > minWant) {
             // we need to keep collateral uninvested
             _depositCollateral(wantBalance.sub(_debtOutstanding));
@@ -156,7 +191,6 @@ contract Strategy is BaseStrategy {
         override
         returns (uint256 _liquidatedAmount, uint256 _loss)
     {
-        // TODO: Do stuff here to free up to `_amountNeeded` from all positions back into `want`
         // NOTE: Maintain invariant `want.balanceOf(this) >= _liquidatedAmount`
         // NOTE: Maintain invariant `_liquidatedAmount + _loss <= _amountNeeded`
         uint256 wantBalance = balanceOfWant();
@@ -210,17 +244,27 @@ contract Strategy is BaseStrategy {
 
     // INTERNAL ACTIONS
     function _claimAndSellRewards() internal returns (uint256) {
+        _claimRewards();
+        // TODO: add other paths for rewards (ySwap? Unstaking in AAVE?)
+        uint256 _comp = IERC20(comp).balanceOf(address(this));
 
+        if (_comp > minCompToSell) {
+            address[] memory path = new address[](3);
+            path[0] = comp;
+            path[1] = weth;
+            path[2] = address(want);
+
+            IUni(uniswapRouter).swapExactTokensForTokens(_comp, uint256(0), path, address(this), block.timestamp);
+        }
     }
 
-    function claimRewards() internal returns (uint256) {
+    function _claimRewards() internal returns (uint256) {
+        CTokenI[] memory tokens = new CTokenI[](1);
+        tokens[0] = cToken;
 
+        compound.claimComp(address(this), tokens);
     }
 
-    function handleRewards() internal returns (uint256) {
-
-    }
-    
     function _freeFunds(uint256 amountToFree) internal returns (uint256) {
         if(amountToFree == 0) return 0;
 
@@ -231,7 +275,7 @@ contract Strategy is BaseStrategy {
         uint256 newBorrow = newCollateral.mul(targetCollatRatio).div(MAX_BPS);
 
         // repay required amount
-        leverDownTo(newBorrow, borrows);
+        _leverDownTo(newBorrow, borrows);
 
         // withdraw as collateral
         _withdrawCollateral(amountRequired);
@@ -248,12 +292,12 @@ contract Strategy is BaseStrategy {
         // TODO: add/replace with flash loan
         while(totalAmountToBorrow > 0) {
             if(i >= maxIterations) break;
-            totalAmountToBorrow = totalAmountToBorrow.sub(leverUpStep(totalAmountToBorrow));
+            totalAmountToBorrow = totalAmountToBorrow.sub(_leverUpStep(totalAmountToBorrow));
             i = i + 1;
         }
     }
 
-    function leverUpStep(uint256 amount) internal returns (uint256) {
+    function _leverUpStep(uint256 amount) internal returns (uint256) {
         if(amount == 0) {
             return 0;
         }
@@ -265,7 +309,7 @@ contract Strategy is BaseStrategy {
         return amount;
     }
 
-    function leverDownTo(uint256 newAmountBorrowed, uint256 currentBorrowed) internal returns (uint256) {
+    function _leverDownTo(uint256 newAmountBorrowed, uint256 currentBorrowed) internal returns (uint256) {
         if(newAmountBorrowed >= currentBorrowed) {
             // we don't need to repay
             return 0;
@@ -287,11 +331,11 @@ contract Strategy is BaseStrategy {
     }
 
     function _withdrawCollateral(uint256 amount) internal returns (uint256) {
-        cToken.redeemUnderlying(amount);
+        require(cToken.redeemUnderlying(amount), "!redeem");
     }
 
     function _repayWant(uint256 amount) internal returns (uint256) {
-        cToken.repayBorrow(amount);
+        require(cToken.repayBorrow(amount) == 0, "!repay");
     }
 
     function _borrowWant(uint256 amount) internal returns (uint256) {
@@ -304,16 +348,26 @@ contract Strategy is BaseStrategy {
     }
 
     function getCurrentPosition() internal view returns (uint256 deposits, uint256 borrows, uint256 currentCollatRatio) {
-        
+        (, uint256 cTokenBalance, uint256 borrowBalance, uint256 exchangeRate) = cToken.getAccountSnapshot(address(this));
+        borrows = borrowBalance;
+        // NOTE: we use 1e18 because exchangeRate has 18 decimals
+        deposits = cTokenBalance.mul(exchangeRate).div(1e18);
     }
 
     function getUpdatedPosition() internal view returns (uint256 deposits, uint256 borrows, uint256 currentCollatRatio) {
-
+        deposits = cToken.balanceOfUnderlying(address(this));
+        borrows = cToken.borrowBalanceCurrent(address(this));
+        currentCollatRatio = borrows.mul(DECIMALS).div(deposits);
     }
 
     // conversions
+    function compToWant(uint256 amount) internal view returns (uint256) {
+        // TODO: Choose best conversion way
+        return amount;
+    }
 
     function ethToWant(uint256 _amtInWei) public view override returns (uint256) {
+        // TODO: Choose best conversion way
         return _amtInWei;
     }
 }

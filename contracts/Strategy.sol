@@ -10,6 +10,7 @@ import {
     BaseStrategy,
     StrategyParams
 } from "@yearnvaults/contracts/BaseStrategy.sol";
+
 import {
     SafeERC20,
     SafeMath,
@@ -18,6 +19,7 @@ import {
 } from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 
 import "@openzeppelin/contracts/math/Math.sol";
+import "../interfaces/uniswap/IUni.sol";
 import "../interfaces/compound/CEtherI.sol";
 import "../interfaces/compound/CErc20I.sol";
 import "../interfaces/compound/ComptrollerI.sol";
@@ -46,12 +48,14 @@ contract Strategy is BaseStrategy {
 
     // TODO: review decimals
     uint256 private constant MAX_BPS = 1 ether;
+    uint256 private immutable DECIMALS;
 
     constructor(address _vault) public BaseStrategy(_vault) {
         // You can set these parameters on deployment to whatever you want
         // maxReportDelay = 6300;
         // profitFactor = 100;
         // debtThreshold = 0;
+        DECIMALS = vault.decimals();
     }
 
     // SETTERS
@@ -69,10 +73,11 @@ contract Strategy is BaseStrategy {
         return netAssets.add(rewards);
     }
 
-    function estimateRewardsInWant() public view returns (uint256) {
-        // NOTE: assuming 15s between blocks
+    function estimatedRewardsInWant() public view returns (uint256) {
+        // NOTE: assuming 13s between blocks
         // NOTE: no problem in using block.timestamp. no decisions are taken using this
-        uint256 blocksSinceLastReport = lastReport.sub(block.timestamp).div(15);
+        uint256 lastReport = vault.strategies(address(this)).lastReport;
+        uint256 blocksSinceLastReport = lastReport.sub(block.timestamp).div(13);
 
         // Amount of COMP that suppliers AND borrowers receive
         uint256 compSpeed = compound.compSpeeds(address(cToken));
@@ -92,13 +97,13 @@ contract Strategy is BaseStrategy {
         uint256 supplyRewards = supplyShare.mul(compSpeed).mul(blocksSinceLastReport);
         // Shortcut if no borrows
         if (totalBorrows == 0 || borrows == 0) {
-            return toWant(supplyRewards);
+            return compToWant(supplyRewards);
         }
 
         uint256 borrowShare = borrows.mul(DECIMALS).div(totalBorrows);
         uint256 borrowRewards = borrowShare.mul(compSpeed).mul(blocksSinceLastReport);
 
-        return toWant(supplyRewards.add(borrowRewards));
+        return compToWant(supplyRewards.add(borrowRewards));
     }
 
     function prepareReturn(uint256 _debtOutstanding)
@@ -245,7 +250,7 @@ contract Strategy is BaseStrategy {
     // INTERNAL ACTIONS
     function _claimAndSellRewards() internal returns (uint256) {
         _claimRewards();
-        // TODO: add other paths for rewards (ySwap? Unstaking in AAVE?)
+        // TODO: add other paths for handling rewards (ySwap? Unstaking in AAVE?)
         uint256 _comp = IERC20(comp).balanceOf(address(this));
 
         if (_comp > minCompToSell) {
@@ -331,7 +336,7 @@ contract Strategy is BaseStrategy {
     }
 
     function _withdrawCollateral(uint256 amount) internal returns (uint256) {
-        require(cToken.redeemUnderlying(amount), "!redeem");
+        require(cToken.redeemUnderlying(amount) == 0, "!redeem");
     }
 
     function _repayWant(uint256 amount) internal returns (uint256) {
@@ -354,7 +359,7 @@ contract Strategy is BaseStrategy {
         deposits = cTokenBalance.mul(exchangeRate).div(1e18);
     }
 
-    function getUpdatedPosition() internal view returns (uint256 deposits, uint256 borrows, uint256 currentCollatRatio) {
+    function getUpdatedPosition() internal returns (uint256 deposits, uint256 borrows, uint256 currentCollatRatio) {
         deposits = cToken.balanceOfUnderlying(address(this));
         borrows = cToken.borrowBalanceCurrent(address(this));
         currentCollatRatio = borrows.mul(DECIMALS).div(deposits);

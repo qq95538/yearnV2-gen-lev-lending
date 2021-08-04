@@ -155,21 +155,16 @@ contract Strategy is BaseStrategy {
             // we have profit
             _profit = totalAssets.sub(totalDebt);
         }
-        emit Number("_debtOutstanding", _debtOutstanding);
-        emit Number("_loss", _loss);
-        emit Number("_profit", _profit);
-        emit Number("estimatedrewards", estimatedRewardsInWant());
+
         uint a = balanceOfWant();
         // claim & sell rewards
         _claimAndSellRewards();
         uint b = balanceOfWant();
-        emit Number("realRewards", b.sub(a));
 
         // free funds to repay debt + profit to the strategy
         uint256 wantBalance = balanceOfWant();
         uint256 amountRequired = _debtOutstanding.add(_profit);
-        emit Number("wantBalance", wantBalance);
-        emit Number("amountRequired", amountRequired);
+
         if(amountRequired > wantBalance) {
             // we need to free funds
             // we dismiss losses here, they cannot be generated from withdrawal
@@ -205,8 +200,6 @@ contract Strategy is BaseStrategy {
         }
     }
 
-    event Number(string name, uint256 number);
-
     function adjustPosition(uint256 _debtOutstanding) internal override {
         uint256 wantBalance = balanceOfWant();
         // deposit available want as collateral
@@ -218,17 +211,15 @@ contract Strategy is BaseStrategy {
         }
         // check current position
         (, , uint256 currentCollatRatio) = getCurrentPosition();
-        emit Number("currentCollatRatio", currentCollatRatio);
+
         // Either we need to free some funds OR we want to be max levered
         if(_debtOutstanding > wantBalance) {
             // we should free funds
             uint256 amountRequired = _debtOutstanding.sub(wantBalance);
-            emit Number("amountRequired", amountRequired);
 
             // NOTE: vault will take free funds during the next harvest
             _freeFunds(amountRequired);
-            emit Number("balanceWant", wantBalance);
-            emit Number("balanceOfWant()", balanceOfWant());
+
         } else if (currentCollatRatio < targetCollatRatio) {
             // we should lever up
             // TODO: create minRatio state variable
@@ -317,19 +308,10 @@ contract Strategy is BaseStrategy {
         uint256 amountRequired = Math.min(amountToFree, realAssets);
         uint256 newSupply = realAssets.sub(amountRequired);
         uint256 newBorrow = newSupply.mul(targetCollatRatio).div(MAX_BPS.sub(targetCollatRatio));
-        emit Number("init lever down", 90090090090023);
-        emit Number("deposits", deposits);
-        emit Number("newSupply", newSupply);
-        emit Number("newBorrow", newBorrow);
-        emit Number("borrows", borrows);
 
         // repay required amount
         _leverDownTo(newBorrow, borrows);
-        emit Number("fin lever down", 90090090090023);
-        emit Number("balanceOfWant", balanceOfWant());
 
-        // withdraw as collateral
-        // _withdrawCollateral(amountRequired);
         return balanceOfWant();
     }
 
@@ -338,20 +320,17 @@ contract Strategy is BaseStrategy {
         // NOTE: decimals should cancel out
         uint256 realSupply = deposits.sub(borrows);
         uint256 newBorrow = realSupply.mul(targetCollatRatio).div(MAX_BPS.sub(targetCollatRatio));
-        emit Number("newBorrow", newBorrow);
 
         uint256 totalAmountToBorrow = newBorrow.sub(borrows);
         uint256 i = 0;
         // TODO: add/replace with flash loan
         while(totalAmountToBorrow > minWant) {
             if(i >= maxIterations) break;
-            emit Number("iteration", i);
-            emit Number("totalAmountToBorrow", totalAmountToBorrow);
+
             uint256 borrowed = _leverUpStep(totalAmountToBorrow);
             totalAmountToBorrow = totalAmountToBorrow.sub(borrowed);
             i = i + 1;
         }
-        emit Number("iterations", i);
     }
 
     function _leverUpStep(uint256 amount) internal returns (uint256) {
@@ -397,13 +376,6 @@ contract Strategy is BaseStrategy {
             (uint256 deposits, uint256 borrows, ) = getCurrentPosition();
             uint256 theoDeposits = borrows.mul(1e18).div(maxCollatRatio);
             uint256 toWithdraw = deposits.sub(theoDeposits);
-            emit Number("iteration", i);
-            emit Number("repaid", repaid);
-            emit Number("borrows", borrows);
-            emit Number("balanceOfWant", balanceOfWant());
-            emit Number("deposits", deposits);
-            emit Number("theoDeposits", theoDeposits);
-            emit Number("toWithdraw", toWithdraw);
             _withdrawCollateral(toWithdraw);
             i = i + 1;
         }

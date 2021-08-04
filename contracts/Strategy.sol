@@ -24,7 +24,10 @@ import "../interfaces/compound/CEtherI.sol";
 import "../interfaces/compound/CErc20I.sol";
 import "../interfaces/compound/ComptrollerI.sol";
 
-contract Strategy is BaseStrategy {
+import "./FlashLoanLib.sol";
+import "../interfaces/dydx/ICallee.sol";
+
+contract Strategy is BaseStrategy, ICallee {
     using SafeERC20 for IERC20;
     using Address for address;
     using SafeMath for uint256;
@@ -47,6 +50,10 @@ contract Strategy is BaseStrategy {
     uint256 public minCompToSell;
     uint256 public maxIterations;
 
+    uint256 private a = 0;
+
+    bool public isDyDxActive = true;
+
     // TODO: review decimals
     uint256 private constant MAX_BPS = 1 ether;
     uint256 private immutable DECIMALS;
@@ -60,7 +67,15 @@ contract Strategy is BaseStrategy {
         DECIMALS = 10 ** vault.decimals();
         IERC20(comp).safeApprove(uniswapRouter, type(uint256).max);
         want.safeApprove(address(_cToken), type(uint256).max);
+        IERC20(address(weth)).safeApprove(FlashLoanLib.SOLO, type(uint256).max);
+        // Enter Compound's ETH market to take it into account when using ETH as collateral
+        address[] memory markets = new address[](2);
+        markets[0] = address(FlashLoanLib.cEth);
+        markets[1] = address(cToken);
+        compound.enterMarkets(markets);
     }
+
+    receive() external payable {}
 
     // SETTERS
     // TODO: add setters for thesholds
@@ -82,6 +97,10 @@ contract Strategy is BaseStrategy {
 
     function setMaxIterations(uint256 _maxIterations) external onlyVaultManagers {
         maxIterations = _maxIterations;
+    }
+
+    function setIsDyDxActive(bool _isDyDxActive) external onlyVaultManagers {
+        isDyDxActive = _isDyDxActive;
     }
 
     function name() external view override returns (string memory) {
@@ -156,10 +175,8 @@ contract Strategy is BaseStrategy {
             _profit = totalAssets.sub(totalDebt);
         }
 
-        uint a = balanceOfWant();
         // claim & sell rewards
         _claimAndSellRewards();
-        uint b = balanceOfWant();
 
         // free funds to repay debt + profit to the strategy
         uint256 wantBalance = balanceOfWant();
@@ -323,14 +340,24 @@ contract Strategy is BaseStrategy {
 
         uint256 totalAmountToBorrow = newBorrow.sub(borrows);
         uint256 i = 0;
-        // TODO: add/replace with flash loan
+
+        // implement flash loan
         while(totalAmountToBorrow > minWant) {
             if(i >= maxIterations) break;
+
+            // The best approach is to lever up using regular method, then finish with flash loan
+            if(i >= 1 && isDyDxActive) {
+                totalAmountToBorrow = totalAmountToBorrow.sub(_leverUpFlashLoan(totalAmountToBorrow));
+            }
 
             uint256 borrowed = _leverUpStep(totalAmountToBorrow);
             totalAmountToBorrow = totalAmountToBorrow.sub(borrowed);
             i = i + 1;
         }
+    }
+
+    function _leverUpFlashLoan(uint256 amount) internal returns (uint256) {
+        return FlashLoanLib.doDyDxFlashLoan(false, amount);
     }
 
     function _leverUpStep(uint256 amount) internal returns (uint256) {
@@ -361,9 +388,9 @@ contract Strategy is BaseStrategy {
         }
         uint256 totalRepayAmount = currentBorrowed.sub(newAmountBorrowed);
         // repay with available want
-        // TODO: add/replace with flash loan
+        totalRepayAmount = totalRepayAmount.sub(_leverDownFlashLoan(totalRepayAmount));
         uint256 i = 0;
-        while(totalRepayAmount > 0) {
+        while(totalRepayAmount > minWant) {
             if(i >= maxIterations) break;
             uint256 toRepay = totalRepayAmount;
             uint256 wantBalance = balanceOfWant();
@@ -375,8 +402,10 @@ contract Strategy is BaseStrategy {
             // withdraw collateral
             (uint256 deposits, uint256 borrows, ) = getCurrentPosition();
             uint256 theoDeposits = borrows.mul(1e18).div(maxCollatRatio);
-            uint256 toWithdraw = deposits.sub(theoDeposits);
-            _withdrawCollateral(toWithdraw);
+            if(deposits > theoDeposits) {
+                uint256 toWithdraw = deposits.sub(theoDeposits);
+                _withdrawCollateral(toWithdraw);
+            }
             i = i + 1;
         }
 
@@ -386,6 +415,23 @@ contract Strategy is BaseStrategy {
         _depositCollateral(toDeposit);
     }
 
+    function _leverDownFlashLoan(uint256 amount) internal returns (uint256) {
+        if(amount <= minWant) return 0;
+        (uint256 deposits, uint256 borrows, ) = getCurrentPosition();
+        if(amount > borrows) {
+            amount = borrows;
+        }
+        uint256 repaid = FlashLoanLib.doDyDxFlashLoan(true, amount);
+        // withdraw collateral
+        (deposits, borrows, ) = getCurrentPosition();
+        uint256 theoDeposits = borrows.mul(1e18).div(maxCollatRatio);
+        if(deposits > theoDeposits) {
+            uint256 toWithdraw = deposits.sub(theoDeposits);
+            _withdrawCollateral(toWithdraw);
+        }
+        return repaid;
+    }
+                                                
     function _depositCollateral(uint256 amount) internal returns (uint256) {
         if(amount == 0) return 0;
         require(cToken.mint(amount) == 0, "!mint");
@@ -413,6 +459,18 @@ contract Strategy is BaseStrategy {
     // INTERNAL VIEWS
     function balanceOfWant() internal view returns (uint256) {
         return want.balanceOf(address(this));
+    }
+
+    function callFunction(
+        address sender,
+        Account.Info memory account,
+        bytes memory data
+    ) public override {
+        (bool deficit, uint256 amount) = abi.decode(data, (bool, uint256));
+        require(msg.sender == FlashLoanLib.SOLO);
+        require(sender == address(this));
+
+        FlashLoanLib.loanLogic(deficit, amount, cToken);
     }
 
     function getCurrentPosition() internal view returns (uint256 deposits, uint256 borrows, uint256 currentCollatRatio) {

@@ -6,5 +6,11 @@ build/
 reports/
 .env
 
+# pyvenv
+bin/
+lib/
+pyvenv.cfg
+
 # Node/npm
 node_modules/
+

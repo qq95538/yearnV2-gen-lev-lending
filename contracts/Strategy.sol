@@ -20,9 +20,9 @@ import {
 
 import "@openzeppelin/contracts/math/Math.sol";
 import "../interfaces/uniswap/IUni.sol";
-import "../interfaces/compound/CEtherI.sol";
-import "../interfaces/compound/CErc20I.sol";
-import "../interfaces/compound/ComptrollerI.sol";
+import "../interfaces/aave/IProtocolDataProvider.sol";
+import "../interfaces/aave/IAToken.sol";
+import "../interfaces/aave/IVariableDebtToken.sol";
 
 import "./FlashLoanLib.sol";
 import "../interfaces/dydx/ICallee.sol";
@@ -32,18 +32,22 @@ contract Strategy is BaseStrategy, ICallee {
     using Address for address;
     using SafeMath for uint256;
 
-    // COMPOUND
-    ComptrollerI private constant compound = ComptrollerI(0x3d9819210A31b4961b30EF54bE2aeD79B9c9Cd3B);
-    address private constant comp = 0xc00e94Cb662C3520282E6f5717214004A7f26888;
-    CErc20I public cToken;
+    // AAVE
+    IProtocolDataProvider private constant aaveDP = IProtocolDataProvider(0x057835Ad21a177dbdd3090bB1CAE03EaCF78Fc6d);
+    address private constant aave = 0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9;
+    address private constant stkAave = 0x4da27a545c0c5B758a6BA100e3a049001de870f5;
+    IAToken public aToken;
+    IVariableDebtToken public variableDebtToken;
 
     // SWAP
     address public constant uniswapRouter = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
     address private constant weth = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
 
     // OPS State Variables
-    uint256 public targetCollatRatio = 0.63 ether;
-    uint256 public maxCollatRatio = 0.645 ether;
+    uint256 private constant COLLAT_TARGET_MARGIN = 0.02 ether;
+    uint256 private constant COLLAT_MAX_MARGIN = 0.005 ether;
+    uint256 public targetCollatRatio;
+    uint256 public maxCollatRatio;
 
     uint256 public minWant;
     uint256 public minRatio;
@@ -58,21 +62,15 @@ contract Strategy is BaseStrategy, ICallee {
     uint256 private constant MAX_BPS = 1 ether;
     uint256 private immutable DECIMALS;
 
-    constructor(address _vault, CErc20I _cToken) public BaseStrategy(_vault) {
-        // You can set these parameters on deployment to whatever you want
-        // maxReportDelay = 6300;
-        // profitFactor = 100;
-        // debtThreshold = 0;
-        cToken = _cToken;
+    constructor(address _vault) public BaseStrategy(_vault) {
+        (aToken,,variableDebtToken) = aaveDP.getReserveTokensAddresses(want);
+        ( , , uint256 liquidationThreshold,,,,,,,) = aaveDP.getReserveConfigurationData(want);
+        targetCollatRatio = (liquidationThreshold * 10**14) - COLLAT_TARGET_MARGIN;
+        maxCollatRatio = (liquidationThreshold * 10**14) - COLLAT_MAX_MARGIN;
         DECIMALS = 10 ** vault.decimals();
-        IERC20(comp).safeApprove(uniswapRouter, type(uint256).max);
-        want.safeApprove(address(_cToken), type(uint256).max);
+        IERC20(aave).safeApprove(uniswapRouter, type(uint256).max);
+        want.safeApprove(address(_aToken), type(uint256).max);
         IERC20(address(weth)).safeApprove(FlashLoanLib.SOLO, type(uint256).max);
-        // Enter Compound's ETH market to take it into account when using ETH as collateral
-        address[] memory markets = new address[](2);
-        markets[0] = address(FlashLoanLib.cEth);
-        markets[1] = address(cToken);
-        compound.enterMarkets(markets);
     }
 
     receive() external payable {}
@@ -104,7 +102,7 @@ contract Strategy is BaseStrategy, ICallee {
     }
 
     function name() external view override returns (string memory) {
-        return "StrategyGenLevCOMP";
+        return "StrategyGenLevAAVE";
     }
 
     function estimatedTotalAssets() public view override returns (uint256) {

@@ -4,18 +4,16 @@ pragma experimental ABIEncoderV2;
 import "@openzeppelin/contracts/math/SafeMath.sol";
 import "../interfaces/dydx/DydxFlashLoanBase.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "../interfaces/compound/CEtherI.sol";
-import "../interfaces/compound/CErc20I.sol";
-import "../interfaces/compound/ComptrollerI.sol";
+import "../interfaces/aave/IProtocolDataProvider.sol";
+import "../interfaces/aave/IAaveIncentivesController.sol";
+import "../interfaces/aave/IStakedAave.sol";
+import "../interfaces/aave/IAToken.sol";
+import "../interfaces/aave/IVariableDebtToken.sol";
+import "../interfaces/aave/IPriceOracle.sol";
+import "../interfaces/aave/ILendingPool.sol";
 
-interface IWETH is IERC20 {
-    function deposit() external payable;
-
-    function withdraw(uint256) external;
-}
-
-interface IUniswapAnchoredView {
-    function price(string memory) external returns (uint256);
+interface IOptionalERC20 {
+    function decimals() external view returns (uint8);
 }
 
 library FlashLoanLib {
@@ -26,55 +24,45 @@ library FlashLoanLib {
         bool deficit,
         address flashLoan
     );
-    address public constant SOLO = 0x1E0447b19BB6EcFdAe1e4AE1694b0C3659614e4e;
-    uint256 private constant PRICE_DECIMALS = 10**6;
-    uint256 private constant collatRatioETH = 0.74 ether;
-    IUniswapAnchoredView private constant oracle =
-        IUniswapAnchoredView(0x841616a5CBA946CF415Efe8a326A621A794D0f97);
-    address private constant weth = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
-    CEtherI public constant cEth =
-        CEtherI(0x4Ddc2D193948926D02f9B1fE9e1daa0718270ED5);
-    ComptrollerI private constant compound =
-        ComptrollerI(0x3d9819210A31b4961b30EF54bE2aeD79B9c9Cd3B);
 
-    function doDyDxFlashLoan(bool deficit, uint256 amountDesired)
-        public
-        returns (uint256)
-    {
+    address public constant SOLO = 0x1E0447b19BB6EcFdAe1e4AE1694b0C3659614e4e;
+    uint256 private constant collatRatioETH = 0.80 ether;
+    address private constant weth = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    IAToken public constant aWeth =
+        IAToken(0x030bA81f1c18d280636F32af80b9AAd02Cf0854e);
+    IProtocolDataProvider private constant protocolDataProvider =
+        IProtocolDataProvider(0x057835Ad21a177dbdd3090bB1CAE03EaCF78Fc6d);
+
+    // Aave's referral code
+    uint16 private constant referral = 0;
+
+    function doDyDxFlashLoan(
+        bool deficit,
+        uint256 amountDesired,
+        address token
+    ) public returns (uint256 amount) {
         if (amountDesired == 0) {
             return 0;
         }
-        uint256 amountWBTC = amountDesired;
+        amount = amountDesired;
         ISoloMargin solo = ISoloMargin(SOLO);
 
         // calculate amount of ETH we need
         uint256 requiredETH;
         {
-            uint256 priceETHBTC =
-                oracle.price("ETH").mul(PRICE_DECIMALS).div(
-                    oracle.price("BTC")
-                );
-            // requiredETH = desiredWBTCInETH / collatRatioETH
-            // desiredWBTCInETH = (desiredWBTC / priceETHBTC)
-            // NOTE: decimals need adjustment (BTC: 8 + ETH: 18)
-            requiredETH = amountWBTC
-                .mul(PRICE_DECIMALS)
-                .mul(1e18)
-                .mul(1e10)
-                .div(priceETHBTC)
-                .div(collatRatioETH);
+            // requiredETH = desiredTokenInETH / collatRatioETH
+            // desiredTokenInETH = (desiredToken / priceETHBTC)
+            requiredETH = _toETH(amount, token).mul(1 ether).div(
+                collatRatioETH
+            );
             // requiredETH = requiredETH.mul(101).div(100); // +1% just in case (TODO: not needed?)
             // Not enough want in DyDx. So we take all we can
 
             uint256 dxdyLiquidity = IERC20(weth).balanceOf(address(solo));
             if (requiredETH > dxdyLiquidity) {
                 requiredETH = dxdyLiquidity;
-                // NOTE: if we cap amountETH, we reduce amountWBTC we are taking too
-                amountWBTC = requiredETH
-                    .mul(collatRatioETH)
-                    .div(priceETHBTC)
-                    .div(1e18)
-                    .div(1e10);
+                // NOTE: if we cap amountETH, we reduce amountToken we are taking too
+                amount = _fromETH(requiredETH, token);
             }
         }
 
@@ -85,13 +73,13 @@ library FlashLoanLib {
         operations[0] = _getWithdrawAction(0, requiredETH); // hardcoded market ID to 0 (ETH)
 
         // 2. Encode arguments of functions and create action for calling it
-        bytes memory data = abi.encode(deficit, amountWBTC);
+        bytes memory data = abi.encode(deficit, amount);
         // This call will:
-        // Unwrap WETH to ETH
+        // Unwrap weth to ETH
         // supply ETH to Compound
-        // borrow desired WBTC from Compound
-        // do stuff with WBTC
-        // repay desired WBTC to Compound
+        // borrow desired Token from Compound
+        // do stuff with Token
+        // repay desired Token to Compound
         // withdraw ETH from Compound
         operations[1] = _getCallAction(data);
 
@@ -106,51 +94,45 @@ library FlashLoanLib {
 
         emit Leverage(amountDesired, requiredETH, deficit, address(solo));
 
-        return amountWBTC; // we need to return the amount of WBTC we have changed our position in
+        return amount; // we need to return the amount of Token we have changed our position in
     }
 
     function loanLogic(
         bool deficit,
         uint256 amount,
-        CErc20I cToken
+        address want
     ) public {
-        uint256 bal = IERC20(weth).balanceOf(address(this));
+        uint256 wethBal = IERC20(weth).balanceOf(address(this));
         // NOTE: weth balance should always be > amount/0.75
-        require(bal >= amount, "!bal"); // to stop malicious calls
+        require(wethBal >= amount, "!bal"); // to stop malicious calls
 
-        uint256 wethBalance = IERC20(weth).balanceOf(address(this));
-        IWETH(weth).withdraw(wethBalance);
-        // will revert if it fails
+        ILendingPool lp = _lendingPool();
+
         // 1. Deposit ETH in Compound as collateral
-        cEth.mint{value: wethBalance}();
-        // 2. Borrow want from Compound (just enough to avoid liquidations)
-        require(cToken.borrow(amount) == 0, "!borrow0");
+        lp.deposit(weth, wethBal, address(this), referral);
+
+        lp.borrow(want, amount, 2, 0, address(this));
         // 3. Use borrowed want
         //if in deficit we repay amount and then withdraw
         if (deficit) {
-            require(cToken.repayBorrow(amount) == 0, "!repay1");
-            require(cToken.redeemUnderlying(amount) == 0, "!redeem1");
+            lp.repay(want, amount, 2, address(this));
+            lp.withdraw(want, amount, address(this));
         } else {
-            //check if this failed incase we borrow into liquidation
-            require(
-                cToken.mint(
-                    IERC20(cToken.underlying()).balanceOf(address(this))
-                ) == 0,
-                "!mint"
+            lp.deposit(
+                want,
+                IERC20(want).balanceOf(address(this)),
+                address(this),
+                referral
             );
-            require(cToken.borrow(amount) == 0, "!borrow1");
+            lp.borrow(want, amount, 2, 0, address(this));
         }
         // 4. Repay want
-        require(cToken.repayBorrow(amount) == 0, "!repay");
+        lp.repay(want, amount, 2, address(this));
         // 5. Redeem collateral (ETH borrowed from DyDx) from Compound
         // NOTE: we take 2 wei more to repay DyDx flash loan
-        // we airdrop WETH to replace this (for gas savings)
+        // we airdrop weth to replace this (for gas savings)
         // require(cEth.borrow(2) == 0, "!borrow2");
-        require(cEth.redeemUnderlying(wethBalance) == 0, "!redeem");
-        // 6. Wrap ETH into WETH
-        IWETH(weth).deposit{value: address(this).balance}();
-
-        // NOTE: after this, WETH will be taken by DyDx
+        lp.withdraw(weth, wethBal, address(this));
     }
 
     function _getAccountInfo() internal view returns (Account.Info memory) {
@@ -224,5 +206,57 @@ library FlashLoanLib {
                 otherAccountId: 0,
                 data: ""
             });
+    }
+
+    function _lendingPool() internal view returns (ILendingPool) {
+        return
+            ILendingPool(
+                protocolDataProvider.ADDRESSES_PROVIDER().getLendingPool()
+            );
+    }
+
+    function _priceOracle() internal view returns (IPriceOracle) {
+        return
+            IPriceOracle(
+                protocolDataProvider.ADDRESSES_PROVIDER().getPriceOracle()
+            );
+    }
+
+    function _toETH(uint256 _amount, address asset)
+        internal
+        view
+        returns (uint256)
+    {
+        if (
+            _amount == 0 ||
+            _amount == type(uint256).max ||
+            address(asset) == address(weth) // 1:1 change
+        ) {
+            return _amount;
+        }
+
+        return
+            _amount.mul(_priceOracle().getAssetPrice(asset)).div(
+                uint256(10)**uint256(IOptionalERC20(asset).decimals())
+            );
+    }
+
+    function _fromETH(uint256 _amount, address asset)
+        internal
+        view
+        returns (uint256)
+    {
+        if (
+            _amount == 0 ||
+            _amount == type(uint256).max ||
+            address(asset) == address(weth) // 1:1 change
+        ) {
+            return _amount;
+        }
+
+        return
+            _amount
+                .mul(uint256(10)**uint256(IOptionalERC20(asset).decimals()))
+                .div(_priceOracle().getAssetPrice(asset));
     }
 }

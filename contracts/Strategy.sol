@@ -41,15 +41,15 @@ contract Strategy is BaseStrategy, ICallee {
         IProtocolDataProvider(0x057835Ad21a177dbdd3090bB1CAE03EaCF78Fc6d);
     IAaveIncentivesController private constant aaveIC =
         IAaveIncentivesController(0xd784927Ff2f95ba542BfC824c8a8a98F3495f6b5);
-    address private constant aave = 0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9;
+    address private constant aave = 0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9;
     IStakedAave private constant stkAave =
         IStakedAave(0x4da27a545c0c5B758a6BA100e3a049001de870f5);
     IAToken public aToken;
     IVariableDebtToken public debtToken;
 
     // SWAP
-    address public constant uniswapRouter =
-        0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
+    IUni public constant uniswapRouter =
+        IUni(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
     address private constant weth = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
 
     // OPS State Variables
@@ -63,6 +63,9 @@ contract Strategy is BaseStrategy, ICallee {
     uint256 public minRewardToSell;
     uint256 public maxIterations;
 
+    // Aave's referral code
+    uint16 internal referral;
+
     uint256 private a = 0;
 
     bool public isDyDxActive = true;
@@ -72,19 +75,20 @@ contract Strategy is BaseStrategy, ICallee {
     uint256 private immutable DECIMALS;
 
     constructor(address _vault) public BaseStrategy(_vault) {
-        (aToken, , debtToken) = aaveDP.getReserveTokensAddresses(want);
+        (address _aToken, , address _debtToken) =
+            protocolDataProvider.getReserveTokensAddresses(address(want));
+        aToken = IAToken(_aToken);
+        debtToken = IVariableDebtToken(_debtToken);
         (, , uint256 liquidationThreshold, , , , , , , ) =
-            aaveDP.getReserveConfigurationData(want);
+            protocolDataProvider.getReserveConfigurationData(address(want));
         liquidationThreshold = liquidationThreshold * 10**14;
         targetCollatRatio = _getTargetLTV(liquidationThreshold);
         maxCollatRatio = _getWarningLTV(liquidationThreshold);
         DECIMALS = 10**vault.decimals();
-        IERC20(aave).safeApprove(uniswapRouter, type(uint256).max);
-        want.safeApprove(address(aToken), type(uint256).max);
+        IERC20(aave).safeApprove(address(uniswapRouter), type(uint256).max);
+        want.safeApprove(_aToken, type(uint256).max);
         IERC20(address(weth)).safeApprove(FlashLoanLib.SOLO, type(uint256).max);
     }
-
-    receive() external payable {}
 
     // SETTERS
     // TODO: add setters for thesholds
@@ -140,36 +144,41 @@ contract Strategy is BaseStrategy, ICallee {
         if (lastReport >= block.timestamp) {
             return 0;
         }
-        uint256 blocksSinceLastReport = block.timestamp.sub(lastReport).div(13);
+        uint256 secondsSinceLastReport = block.timestamp.sub(lastReport);
 
-        // Amount of COMP that suppliers AND borrowers receive
-        uint256 compSpeed = compound.compSpeeds(address(cToken));
+        (, uint256 supplyAavePerSecond, ) =
+            _incentivesController().getAssetData(address(aToken));
+        (, uint256 borrowAavePerSecond, ) =
+            _incentivesController().getAssetData(address(debtToken));
 
         (uint256 deposits, uint256 borrows, ) = getCurrentPosition();
 
-        // NOTE: using 1e18 because exchangeRate has 18 decimals
-        // TODO: check that exchangeRate always has 18 decimals
-        uint256 totalDeposits =
-            cToken.totalSupply().mul(cToken.exchangeRateStored()).div(1e18);
-        uint256 totalBorrows = cToken.totalBorrows();
-        // Shortcut if no deposits / (== no borrows)
-        if (totalDeposits == 0 || deposits == 0) {
+        uint256 totalDeposits = aToken.totalSupply();
+        uint256 totalBorrows = debtToken.totalSupply();
+
+        if (deposits == 0 || totalDeposits == 0) {
             return 0;
         }
         // NOTE: compSpeed is the same for borrows and deposits
         uint256 supplyShare = deposits.mul(DECIMALS).div(totalDeposits);
         uint256 supplyRewards =
-            supplyShare.mul(compSpeed).mul(blocksSinceLastReport).div(DECIMALS);
+            supplyShare
+                .mul(supplyAavePerSecond)
+                .mul(secondsSinceLastReport)
+                .div(DECIMALS);
         // Shortcut if no borrows
-        if (totalBorrows == 0 || borrows == 0) {
-            return compToWant(supplyRewards);
+        if (borrows == 0 || totalBorrows == 0) {
+            return tokenToWant(aave, supplyRewards);
         }
 
         uint256 borrowShare = borrows.mul(DECIMALS).div(totalBorrows);
         uint256 borrowRewards =
-            borrowShare.mul(compSpeed).mul(blocksSinceLastReport).div(DECIMALS);
+            borrowShare
+                .mul(borrowAavePerSecond)
+                .mul(secondsSinceLastReport)
+                .div(DECIMALS);
 
-        return compToWant(supplyRewards.add(borrowRewards));
+        return tokenToWant(aave, supplyRewards.add(borrowRewards));
     }
 
     function prepareReturn(uint256 _debtOutstanding)
@@ -313,34 +322,50 @@ contract Strategy is BaseStrategy, ICallee {
     {}
 
     // INTERNAL ACTIONS
+
     function _claimAndSellRewards() internal returns (uint256) {
-        // TODO: add other paths for handling rewards (ySwap? Unstaking in AAVE?)
-        uint256 _comp = _claimRewards();
-        uint256[] memory amounts;
-        if (_comp > minCompToSell) {
-            address[] memory path = new address[](3);
-            path[0] = comp;
-            path[1] = weth;
-            path[2] = address(want);
-
-            amounts = IUni(uniswapRouter).swapExactTokensForTokens(
-                _comp,
-                uint256(0),
-                path,
-                address(this),
-                block.timestamp
-            );
-            return amounts[amounts.length - 1];
+        // redeem AAVE from stkAave
+        uint256 stkAaveBalance =
+            IERC20(address(stkAave)).balanceOf(address(this));
+        if (stkAaveBalance > 0 && _checkCooldown()) {
+            // claim AAVE rewards
+            stkAave.claimRewards(address(this), type(uint256).max);
+            stkAave.redeem(address(this), stkAaveBalance);
         }
-    }
 
-    function _claimRewards() internal returns (uint256) {
-        CTokenI[] memory tokens = new CTokenI[](1);
-        tokens[0] = cToken;
+        // sell AAVE for want
+        // a minimum balance of 0.01 AAVE is required
+        uint256 aaveBalance = IERC20(aave).balanceOf(address(this));
+        if (aaveBalance > 1e15) {
+            _sellAAVEForWant(aaveBalance);
+        }
 
-        compound.claimComp(address(this), tokens);
+        // claim rewards
+        // only add to assets those assets that are incentivised
+        address[] memory assets;
+        assets = new address[](2);
+        assets[0] = address(aToken);
+        assets[1] = address(debtToken);
 
-        return IERC20(comp).balanceOf(address(this));
+        _incentivesController().claimRewards(
+            assets,
+            type(uint256).max,
+            address(this)
+        );
+
+        // request start of cooldown period
+        uint256 cooldownStartTimestamp =
+            stkAave.stakersCooldowns(address(this));
+        uint256 COOLDOWN_SECONDS = stkAave.COOLDOWN_SECONDS();
+        uint256 UNSTAKE_WINDOW = stkAave.UNSTAKE_WINDOW();
+        if (
+            (IERC20(address(stkAave)).balanceOf(address(this)) > 0 &&
+                (cooldownStartTimestamp == 0)) ||
+            block.timestamp >
+            cooldownStartTimestamp.add(COOLDOWN_SECONDS).add(UNSTAKE_WINDOW)
+        ) {
+            stkAave.cooldown();
+        }
     }
 
     function _freeFunds(uint256 amountToFree) internal returns (uint256) {
@@ -393,7 +418,7 @@ contract Strategy is BaseStrategy, ICallee {
     }
 
     function _leverUpFlashLoan(uint256 amount) internal returns (uint256) {
-        return FlashLoanLib.doDyDxFlashLoan(false, amount);
+        return FlashLoanLib.doDyDxFlashLoan(false, amount, address(want));
     }
 
     function _leverUpStep(uint256 amount) internal returns (uint256) {
@@ -466,7 +491,8 @@ contract Strategy is BaseStrategy, ICallee {
         if (amount > borrows) {
             amount = borrows;
         }
-        uint256 repaid = FlashLoanLib.doDyDxFlashLoan(true, amount);
+        uint256 repaid =
+            FlashLoanLib.doDyDxFlashLoan(true, amount, address(want));
         // withdraw collateral
         (deposits, borrows, ) = getCurrentPosition();
         uint256 theoDeposits = borrows.mul(1e18).div(maxCollatRatio);
@@ -496,28 +522,19 @@ contract Strategy is BaseStrategy, ICallee {
     function _repayWant(uint256 amount) internal returns (uint256) {
         if (amount == 0) return 0;
         ILendingPool lp = _lendingPool();
-        _checkAllowance(
-            address(lp),
-            address(want),
-            amount
-        );
-        return lp.repay(
-            address(want),
-            amount,
-            2,
-            address(this)
-        );
+        _checkAllowance(address(lp), address(want), amount);
+        return lp.repay(address(want), amount, 2, address(this));
     }
 
     function _borrowWant(uint256 amount) internal returns (uint256) {
         if (amount == 0) return 0;
         _lendingPool().borrow(
-                    address(want),
-                    amount,
-                    2,
-                    referral,
-                    address(this)
-                );
+            address(want),
+            amount,
+            2,
+            referral,
+            address(this)
+        );
         return amount;
     }
 
@@ -543,7 +560,7 @@ contract Strategy is BaseStrategy, ICallee {
         require(msg.sender == FlashLoanLib.SOLO);
         require(sender == address(this));
 
-        FlashLoanLib.loanLogic(deficit, amount, cToken);
+        FlashLoanLib.loanLogic(deficit, amount, address(this));
     }
 
     function getCurrentPosition()
@@ -563,7 +580,11 @@ contract Strategy is BaseStrategy, ICallee {
     }
 
     // conversions
-    function tokenToWant(address token, uint256 amount) internal view returns (uint256) {
+    function tokenToWant(address token, uint256 amount)
+        internal
+        view
+        returns (uint256)
+    {
         if (amount == 0) return 0;
 
         address[] memory path;
@@ -605,9 +626,10 @@ contract Strategy is BaseStrategy, ICallee {
     }
 
     function _lendingPool() internal view returns (ILendingPool) {
-        return ILendingPool(
-            protocolDataProvider.ADDRESSES_PROVIDER().getLendingPool()
-        );
+        return
+            ILendingPool(
+                protocolDataProvider.ADDRESSES_PROVIDER().getLendingPool()
+            );
     }
 
     function _priceOracle() internal view returns (IPriceOracle) {
@@ -625,6 +647,17 @@ contract Strategy is BaseStrategy, ICallee {
         return aToken.getIncentivesController();
     }
 
+    function _checkCooldown() internal view returns (bool) {
+        uint256 cooldownStartTimestamp =
+            IStakedAave(stkAave).stakersCooldowns(address(this));
+        uint256 COOLDOWN_SECONDS = IStakedAave(stkAave).COOLDOWN_SECONDS();
+        uint256 UNSTAKE_WINDOW = IStakedAave(stkAave).UNSTAKE_WINDOW();
+        return
+            cooldownStartTimestamp != 0 &&
+            block.timestamp > cooldownStartTimestamp.add(COOLDOWN_SECONDS) &&
+            block.timestamp <=
+            cooldownStartTimestamp.add(COOLDOWN_SECONDS).add(UNSTAKE_WINDOW);
+    }
 
     function _checkAllowance(
         address _contract,
@@ -657,8 +690,7 @@ contract Strategy is BaseStrategy, ICallee {
         pure
         returns (uint256)
     {
-        return
-            liquidationThreshold.mul(1e14).sub(COLLAT_TARGET_MARGIN);
+        return liquidationThreshold.mul(1e14).sub(COLLAT_TARGET_MARGIN);
     }
 
     function _getWarningLTV(uint256 liquidationThreshold)
@@ -667,5 +699,38 @@ contract Strategy is BaseStrategy, ICallee {
         returns (uint256)
     {
         return liquidationThreshold.mul(1e14).sub(COLLAT_MAX_MARGIN);
+    }
+
+    function getTokenOutPath(address _token_in, address _token_out)
+        internal
+        pure
+        returns (address[] memory _path)
+    {
+        bool is_weth =
+            _token_in == address(weth) || _token_out == address(weth);
+        _path = new address[](is_weth ? 2 : 3);
+        _path[0] = _token_in;
+
+        if (is_weth) {
+            _path[1] = _token_out;
+        } else {
+            _path[1] = address(weth);
+            _path[2] = _token_out;
+        }
+    }
+
+    function _sellAAVEForWant(uint256 _amount) internal {
+        if (_amount == 0) {
+            return;
+        }
+
+        _checkAllowance(address(uniswapRouter), address(aave), _amount);
+        uniswapRouter.swapExactTokensForTokens(
+            _amount,
+            0,
+            getTokenOutPath(address(aave), address(want)),
+            address(this),
+            now
+        );
     }
 }

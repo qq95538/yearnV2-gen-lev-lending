@@ -48,6 +48,10 @@ def strategist(accounts):
 def keeper(accounts):
     yield accounts[5]
 
+@pytest.fixture(autouse=True)
+def FlashLoanLibrary(FlashLoanLib, gov):
+    yield gov.deploy(FlashLoanLib)
+
 
 token_addresses = {
     "WBTC": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",  # WBTC
@@ -63,7 +67,7 @@ token_addresses = {
 @pytest.fixture(
     params=[
         # 'WBTC', # WBTC
-        # "YFI",  # YFI
+        "YFI",  # YFI
         # "WETH",  # WETH
         # 'LINK', # LINK
         # 'USDT', # USDT
@@ -107,7 +111,7 @@ token_prices = {
 @pytest.fixture(autouse=True)
 def amount(token, token_whale, user):
     # this will get the number of tokens (around $1m worth of token)
-    amillion = round(1_000_000 / token_prices.symbol())
+    amillion = round(1_000_000 / token_prices[token.symbol()])
     amount = amillion * 10 ** token.decimals()
     # In order to get some funds for the token you are about to use,
     # it impersonate a whale address
@@ -151,10 +155,15 @@ def live_vault(registry, token):
 
 
 @pytest.fixture
-def strategy(strategist, keeper, vault, Strategy, gov):
+def strategy(chain, strategist, keeper, vault, Strategy, gov, weth):
     strategy = strategist.deploy(Strategy, vault)
     strategy.setKeeper(keeper)
     vault.addStrategy(strategy, 10_000, 0, 2 ** 256 - 1, 1_000, {"from": gov})
+
+    # send WETH to repay 2 wei+ each flashloan
+    weth.transfer(strategy, 1e6, {'from': '0xBA12222222228d8Ba445958a75a0704d566BF2C8'})
+    chain.sleep(1)
+    chain.mine()
     yield strategy
 
 

@@ -1,7 +1,7 @@
 import brownie
 from brownie import Contract
 import pytest
-from utils import actions, checks
+from utils import actions, checks, utils
 
 
 def test_operation(
@@ -16,8 +16,13 @@ def test_operation(
     strategy.harvest({"from": strategist})
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
+    utils.strategy_status(vault, strategy)
+
     # tend()
     strategy.tend({"from": strategist})
+
+    utils.sleep(3 * 24 * 3600)
+    strategy.harvest({"from": strategist})
 
     # withdrawal
     vault.withdraw({"from": user})
@@ -90,12 +95,7 @@ def test_sweep(gov, vault, strategy, token, user, amount, weth, weth_amount):
     with brownie.reverts("!shares"):
         strategy.sweep(vault.address, {"from": gov})
 
-    # TODO: If you add protected tokens to the strategy.
-    # Protected token doesn't work
-    # with brownie.reverts("!protected"):
-    #     strategy.sweep(strategy.protectedToken(), {"from": gov})
-
-    before_balance = weth.balanceOf(gov)
+    before_balance = weth.balanceOf(gov) + weth.balanceOf(strategy) # strategy has some weth to pay for flashloans 
     weth.transfer(strategy, weth_amount, {"from": user})
     assert weth.address != strategy.want()
     assert weth.balanceOf(user) == 0

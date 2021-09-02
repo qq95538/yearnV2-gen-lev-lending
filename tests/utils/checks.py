@@ -22,7 +22,7 @@ def check_revoked_strategy(vault, strategy):
 
 
 def check_harvest_profit(tx, profit_amount):
-    assert tx.events["Harvested"]["gain"] == profit_amount
+    assert tx.events["Harvested"]["profit"] == profit_amount
 
 
 def check_harvest_loss(tx, loss_amount):

@@ -28,7 +28,10 @@ def test_airdrop(
     token.transfer(strategy, airdrop_amount, {"from": token_whale})
 
     # check that estimatedTotalAssets estimates correctly
-    assert total_assets + airdrop_amount == strategy.estimatedTotalAssets()
+    assert (
+        pytest.approx(strategy.estimatedTotalAssets() / 1e18, rel=RELATIVE_APPROX)
+        == (total_assets + airdrop_amount + strategy.estimatedRewardsInWant()) / 1e18
+    )
 
     before_pps = vault.pricePerShare()
     # Harvest 2: Realize profit

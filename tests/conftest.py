@@ -1,6 +1,5 @@
 import pytest
-from brownie import config
-from brownie import Contract
+from brownie import config, Contract, network
 
 # Function scoped isolation fixture to enable xdist.
 # Snapshots the chain before each test and reverts after test completion.
@@ -48,6 +47,7 @@ def strategist(accounts):
 def keeper(accounts):
     yield accounts[5]
 
+
 @pytest.fixture(autouse=True)
 def FlashLoanLibrary(FlashLoanLib, gov):
     yield gov.deploy(FlashLoanLib)
@@ -66,8 +66,8 @@ token_addresses = {
 # TODO: uncomment those tokens you want to test as want
 @pytest.fixture(
     params=[
-        # 'WBTC', # WBTC
-        "YFI",  # YFI
+        'WBTC', # WBTC
+        # "YFI",  # YFI
         # "WETH",  # WETH
         # 'LINK', # LINK
         # 'USDT', # USDT
@@ -98,8 +98,8 @@ def token_whale(token):
 
 
 token_prices = {
-    "WBTC": 35_000,
-    "WETH": 2_000,
+    "WBTC": 45_000,
+    "WETH": 3_500,
     "LINK": 20,
     "YFI": 30_000,
     "USDT": 1,
@@ -161,7 +161,7 @@ def strategy(chain, strategist, keeper, vault, Strategy, gov, weth):
     vault.addStrategy(strategy, 10_000, 0, 2 ** 256 - 1, 1_000, {"from": gov})
 
     # send WETH to repay 2 wei+ each flashloan
-    weth.transfer(strategy, 1e6, {'from': '0xBA12222222228d8Ba445958a75a0704d566BF2C8'})
+    weth.transfer(strategy, 1e6, {"from": "0xBA12222222228d8Ba445958a75a0704d566BF2C8"})
     chain.sleep(1)
     chain.mine()
     yield strategy
@@ -180,7 +180,7 @@ def cloned_strategy(Strategy, vault, strategy, strategist, gov):
     yield
 
 
-@pytest.fixture(autouse=True)
+#@pytest.fixture(autouse=True)
 def withdraw_no_losses(vault, token, amount, user):
     yield
     if vault.totalSupply() != 0:

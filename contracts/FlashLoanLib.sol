@@ -26,7 +26,7 @@ library FlashLoanLib {
     );
 
     address public constant SOLO = 0x1E0447b19BB6EcFdAe1e4AE1694b0C3659614e4e;
-    uint256 private constant collatRatioETH = 0.80 ether;
+    uint256 private constant collatRatioETH = 0.79 ether;
     address private constant weth = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     IAToken public constant aWeth =
         IAToken(0x030bA81f1c18d280636F32af80b9AAd02Cf0854e);
@@ -55,14 +55,14 @@ library FlashLoanLib {
             requiredETH = _toETH(amount, token).mul(1 ether).div(
                 collatRatioETH
             );
-            // requiredETH = requiredETH.mul(101).div(100); // +1% just in case (TODO: not needed?)
-            // Not enough want in DyDx. So we take all we can
 
             uint256 dxdyLiquidity = IERC20(weth).balanceOf(address(solo));
             if (requiredETH > dxdyLiquidity) {
                 requiredETH = dxdyLiquidity;
                 // NOTE: if we cap amountETH, we reduce amountToken we are taking too
-                amount = _fromETH(requiredETH, token);
+                amount = _fromETH(requiredETH, token).mul(collatRatioETH).div(
+                    1 ether
+                );
             }
         }
 
@@ -73,14 +73,13 @@ library FlashLoanLib {
         operations[0] = _getWithdrawAction(0, requiredETH); // hardcoded market ID to 0 (ETH)
 
         // 2. Encode arguments of functions and create action for calling it
-        bytes memory data = abi.encode(deficit, amount);
+        bytes memory data = abi.encode(deficit, amount, token);
         // This call will:
-        // Unwrap weth to ETH
-        // supply ETH to Compound
-        // borrow desired Token from Compound
+        // supply ETH to Aave
+        // borrow desired Token from Aave
         // do stuff with Token
-        // repay desired Token to Compound
-        // withdraw ETH from Compound
+        // repay desired Token to Aave
+        // withdraw ETH from Aave
         operations[1] = _getCallAction(data);
 
         // 3. Repay FlashLoan
@@ -108,30 +107,24 @@ library FlashLoanLib {
 
         ILendingPool lp = _lendingPool();
 
-        // 1. Deposit ETH in Compound as collateral
+        // 1. Deposit WETH in Aave as collateral
         lp.deposit(weth, wethBal, address(this), referral);
 
-        lp.borrow(want, amount, 2, 0, address(this));
-        // 3. Use borrowed want
-        //if in deficit we repay amount and then withdraw
         if (deficit) {
-            lp.repay(want, amount, 2, address(this));
+            // 2a. if in deficit withdraw amount and repay it
             lp.withdraw(want, amount, address(this));
+            lp.repay(want, amount, 2, address(this));
         } else {
+            // 2b. if levering up borrow and deposit
+            lp.borrow(want, amount, 2, 0, address(this));
             lp.deposit(
                 want,
                 IERC20(want).balanceOf(address(this)),
                 address(this),
                 referral
             );
-            lp.borrow(want, amount, 2, 0, address(this));
         }
-        // 4. Repay want
-        lp.repay(want, amount, 2, address(this));
-        // 5. Redeem collateral (ETH borrowed from DyDx) from Compound
-        // NOTE: we take 2 wei more to repay DyDx flash loan
-        // we airdrop weth to replace this (for gas savings)
-        // require(cEth.borrow(2) == 0, "!borrow2");
+        // 3. Withdraw WETH
         lp.withdraw(weth, wethBal, address(this));
     }
 

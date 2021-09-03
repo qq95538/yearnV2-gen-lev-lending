@@ -4883,6 +4883,10 @@ yargs@^15.1.0:
     y18n "^4.0.0"
     yargs-parser "^18.1.2"
 
+"yearn-protocol@https://github.com/yearn/yearn-vaults.git":
+  version "0.0.0"
+  resolved "https://github.com/yearn/yearn-vaults.git#352c41ae4cdd61b7a5f1f693240c03891368e867"
+
 yocto-queue@^0.1.0:
   version "0.1.0"
   resolved "https://registry.yarnpkg.com/yocto-queue/-/yocto-queue-0.1.0.tgz#0294eb3dee05028d31ee1a5fa2c556a6aaf10a1b"

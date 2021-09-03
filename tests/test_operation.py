@@ -62,6 +62,9 @@ def test_increase_debt_ratio(
     vault.updateStrategyDebtRatio(strategy.address, 10_000, {"from": gov})
     chain.sleep(1)
     strategy.harvest({"from": strategist})
+
+    utils.strategy_status(vault, strategy)
+
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
 
@@ -79,6 +82,9 @@ def test_decrease_debt_ratio(
     vault.updateStrategyDebtRatio(strategy.address, 5_000, {"from": gov})
     chain.sleep(1)
     strategy.harvest({"from": strategist})
+
+    utils.strategy_status(vault, strategy)
+
     half = int(amount / 2)
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == half
 

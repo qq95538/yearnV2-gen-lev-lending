@@ -403,8 +403,8 @@ contract Strategy is BaseStrategy, ICallee {
         uint256 amountRequired = Math.min(amountToFree, realAssets);
         uint256 newSupply = realAssets.sub(amountRequired);
         uint256 newBorrow =
-            newSupply.mul(maxBorrowCollatRatio).div(
-                COLLATERAL_RATIO_PRECISION.sub(maxBorrowCollatRatio)
+            newSupply.mul(targetCollatRatio).div(
+                COLLATERAL_RATIO_PRECISION.sub(targetCollatRatio)
             );
 
         // repay required amount
@@ -426,22 +426,28 @@ contract Strategy is BaseStrategy, ICallee {
             );
 
         uint256 totalAmountToBorrow = newBorrow.sub(borrows);
-        uint256 i = 0;
 
-        // implement flash loan
-        while (totalAmountToBorrow > minWant) {
-            if (i >= maxIterations) break;
-
+        if (isDyDxActive) {
             // The best approach is to lever up using regular method, then finish with flash loan
-            if (i >= 1 && isDyDxActive) {
+            totalAmountToBorrow = totalAmountToBorrow.sub(
+                _leverUpStep(totalAmountToBorrow)
+            );
+
+            if (totalAmountToBorrow > minWant) {
                 totalAmountToBorrow = totalAmountToBorrow.sub(
                     _leverUpFlashLoan(totalAmountToBorrow)
                 );
             }
-
-            uint256 borrowed = _leverUpStep(totalAmountToBorrow);
-            totalAmountToBorrow = totalAmountToBorrow.sub(borrowed);
-            i = i + 1;
+        } else {
+            for (
+                uint256 i = 0;
+                i < maxIterations && totalAmountToBorrow > minWant;
+                i++
+            ) {
+                totalAmountToBorrow = totalAmountToBorrow.sub(
+                    _leverUpStep(totalAmountToBorrow)
+                );
+            }
         }
     }
 
@@ -483,13 +489,18 @@ contract Strategy is BaseStrategy, ICallee {
             return 0;
         }
         uint256 totalRepayAmount = currentBorrowed.sub(newAmountBorrowed);
-        // repay with available want
-        totalRepayAmount = totalRepayAmount.sub(
-            _leverDownFlashLoan(totalRepayAmount)
-        );
+        if (isDyDxActive) {
+            totalRepayAmount = totalRepayAmount.sub(
+                _leverDownFlashLoan(totalRepayAmount)
+            );
+        }
+
         uint256 i = 0;
-        while (totalRepayAmount > minWant) {
-            if (i >= maxIterations) break;
+        for (
+            uint256 i = 0;
+            i < maxIterations && totalRepayAmount > minWant;
+            i++
+        ) {
             uint256 toRepay = totalRepayAmount;
             uint256 wantBalance = balanceOfWant();
             if (toRepay > wantBalance) {
@@ -499,12 +510,11 @@ contract Strategy is BaseStrategy, ICallee {
             totalRepayAmount = totalRepayAmount.sub(repaid);
             // withdraw collateral
             (uint256 deposits, uint256 borrows, ) = getCurrentPosition();
-            uint256 theoDeposits = borrows.mul(1e18).div(maxCollatRatio);
+            uint256 theoDeposits = borrows.mul(1e18).div(targetCollatRatio);
             if (deposits > theoDeposits) {
                 uint256 toWithdraw = deposits.sub(theoDeposits);
                 _withdrawCollateral(toWithdraw);
             }
-            i = i + 1;
         }
 
         // deposit back to get targetCollatRatio (we always need to leave this in this ratio)
@@ -663,13 +673,6 @@ contract Strategy is BaseStrategy, ICallee {
         return
             ILendingPool(
                 protocolDataProvider.ADDRESSES_PROVIDER().getLendingPool()
-            );
-    }
-
-    function _priceOracle() internal view returns (IPriceOracle) {
-        return
-            IPriceOracle(
-                protocolDataProvider.ADDRESSES_PROVIDER().getPriceOracle()
             );
     }
 

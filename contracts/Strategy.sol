@@ -68,17 +68,21 @@ contract Strategy is BaseStrategy, ICallee {
     uint256 public targetCollatRatio; // The LTV we are levering up to
     uint256 public maxCollatRatio; // Closest to liquidation we'll risk
 
-    uint256 public minWant;
+    uint256 public minWant = 100;
     uint256 public minRatio;
-    uint256 public minRewardToSell;
-    uint256 public maxIterations = 6;
+    uint256 public minRewardToSell = 1e15;
+    uint8 public maxIterations = 6;
+    uint256 public maxStkAavePriceImpactBps = 500;
+    uint256 public pessimismFactor = 1000;
+    bool public sellStkAave = true;
+    bool public useUniV3 = false;
+    bool public isDyDxActive = true;
 
     // Aave's referral code
     uint16 internal referral = 0;
 
-    bool public isDyDxActive = true;
-
     // TODO: review decimals
+    uint256 private constant MAX_BPS = 1e4;
     uint256 private constant COLLATERAL_RATIO_PRECISION = 1 ether;
     uint256 private immutable DECIMALS;
 
@@ -132,11 +136,12 @@ contract Strategy is BaseStrategy, ICallee {
         minRewardToSell = _minRewardToSell;
     }
 
-    function setMaxIterations(uint256 _maxIterations)
-        external
-        onlyVaultManagers
-    {
+    function setMaxIterations(uint8 _maxIterations) external onlyVaultManagers {
         maxIterations = _maxIterations;
+    }
+
+    function setSellStkAave(bool _sellStkAave) external onlyVaultManagers {
+        sellStkAave = _sellStkAave;
     }
 
     function setIsDyDxActive(bool _isDyDxActive) external onlyVaultManagers {
@@ -150,12 +155,26 @@ contract Strategy is BaseStrategy, ICallee {
     function estimatedTotalAssets() public view override returns (uint256) {
         (uint256 deposits, uint256 borrows, ) = getCurrentPosition();
         uint256 netAssets = deposits.sub(borrows);
-        uint256 rewards = estimatedRewardsInWant();
+        uint256 rewards =
+            estimatedRewardsInWant().mul(MAX_BPS - pessimismFactor).div(
+                MAX_BPS
+            );
 
         return balanceOfWant().add(netAssets).add(rewards);
     }
 
     function estimatedRewardsInWant() public view returns (uint256) {
+        uint256 aaveBalance = IERC20(aave).balanceOf(address(this));
+        uint256 stkAaveBalance =
+            IERC20(address(stkAave)).balanceOf(address(this));
+
+        uint256 combinedBalance =
+            aaveBalance.add(
+                stkAaveBalance.mul(MAX_BPS - maxStkAavePriceImpactBps).div(
+                    MAX_BPS
+                )
+            );
+
         // NOTE: assuming 13s between blocks
         // NOTE: no problem in using block.timestamp. no decisions are taken using this
         uint256 lastReport = vault.strategies(address(this)).lastReport;
@@ -175,7 +194,7 @@ contract Strategy is BaseStrategy, ICallee {
         uint256 totalBorrows = debtToken.totalSupply();
 
         if (deposits == 0 || totalDeposits == 0) {
-            return 0;
+            return tokenToWant(aave, combinedBalance);
         }
 
         uint256 supplyShare = deposits.mul(DECIMALS).div(totalDeposits);
@@ -186,7 +205,7 @@ contract Strategy is BaseStrategy, ICallee {
                 .div(DECIMALS);
         // Shortcut if no borrows
         if (borrows == 0 || totalBorrows == 0) {
-            return tokenToWant(aave, supplyRewards);
+            return tokenToWant(aave, supplyRewards.add(combinedBalance));
         }
 
         uint256 borrowShare = borrows.mul(DECIMALS).div(totalBorrows);
@@ -196,7 +215,11 @@ contract Strategy is BaseStrategy, ICallee {
                 .mul(secondsSinceLastReport)
                 .div(DECIMALS);
 
-        return tokenToWant(aave, supplyRewards.add(borrowRewards));
+        return
+            tokenToWant(
+                aave,
+                supplyRewards.add(borrowRewards).add(combinedBalance)
+            );
     }
 
     function prepareReturn(uint256 _debtOutstanding)
@@ -214,7 +237,10 @@ contract Strategy is BaseStrategy, ICallee {
         // account for profit / losses
         uint256 totalDebt = vault.strategies(address(this)).totalDebt;
 
-        uint256 totalAssets = estimatedTotalAssets();
+        // Assets immediately convertable to want only
+        (uint256 deposits, uint256 borrows, ) = getCurrentPosition();
+        uint256 totalAssets = balanceOfWant().add(deposits).sub(borrows);
+
         if (totalDebt > totalAssets) {
             // we have losses
             _loss = totalDebt.sub(totalAssets);
@@ -224,34 +250,21 @@ contract Strategy is BaseStrategy, ICallee {
         }
 
         // free funds to repay debt + profit to the strategy
-        uint256 wantBalance = balanceOfWant();
+        uint256 amountAvailable = balanceOfWant();
         uint256 amountRequired = _debtOutstanding.add(_profit);
 
-        if (amountRequired > wantBalance) {
-            // we need to free funds
-            // we dismiss losses here, they cannot be generated from withdrawal
-            // but it is possible for the strategy to unwind full position
-            (uint256 amountAvailable, ) = liquidatePosition(amountRequired);
-            if (amountAvailable >= amountRequired) {
-                _debtPayment = _debtOutstanding;
-                // profit remains unchanged unless there is not enough to pay it
-                if (amountRequired.sub(_debtPayment) < _profit) {
-                    _profit = amountRequired.sub(_debtPayment);
-                }
+        if (amountRequired > amountAvailable) {
+            if (_debtOutstanding >= amountAvailable) {
+                // available funds are lower than the repayment that we need to do
+                _profit = 0;
+                _debtPayment = amountAvailable;
+                // we dont report losses here as the strategy might not be able to return in this harvest
+                // but it will still be there for the next harvest
             } else {
-                // we were not able to free enough funds
-                if (amountAvailable < _debtOutstanding) {
-                    // available funds are lower than the repayment that we need to do
-                    _profit = 0;
-                    _debtPayment = amountAvailable;
-                    // we dont report losses here as the strategy might not be able to return in this harvest
-                    // but it will still be there for the next harvest
-                } else {
-                    // NOTE: amountRequired is always equal or greater than _debtOutstanding
-                    // important to use amountRequired just in case amountAvailable is > amountAvailable
-                    _debtPayment = _debtOutstanding;
-                    _profit = amountAvailable.sub(_debtPayment);
-                }
+                // NOTE: amountRequired is always equal or greater than _debtOutstanding
+                // important to use amountRequired just in case amountAvailable is > amountAvailable
+                _debtPayment = _debtOutstanding;
+                _profit = amountAvailable.sub(_debtPayment);
             }
         } else {
             _debtPayment = _debtOutstanding;
@@ -269,7 +282,6 @@ contract Strategy is BaseStrategy, ICallee {
             wantBalance > _debtOutstanding &&
             wantBalance.sub(_debtOutstanding) > minWant
         ) {
-            // we need to keep collateral uninvested
             _depositCollateral(wantBalance.sub(_debtOutstanding));
             // we update the value
             wantBalance = balanceOfWant();
@@ -310,10 +322,10 @@ contract Strategy is BaseStrategy, ICallee {
         uint256 amountRequired = _amountNeeded.sub(wantBalance);
         _freeFunds(amountRequired);
 
-        uint256 totalAssets = balanceOfWant();
-        if (_amountNeeded > totalAssets) {
-            _liquidatedAmount = totalAssets;
-            _loss = _amountNeeded.sub(totalAssets);
+        uint256 freeAssets = balanceOfWant();
+        if (_amountNeeded > freeAssets) {
+            _liquidatedAmount = freeAssets;
+            _loss = _amountNeeded.sub(freeAssets);
         } else {
             _liquidatedAmount = _amountNeeded;
         }
@@ -323,7 +335,9 @@ contract Strategy is BaseStrategy, ICallee {
         internal
         override
         returns (uint256 _amountFreed)
-    {}
+    {
+        (_amountFreed, ) = liquidatePosition(type(uint256).max);
+    }
 
     function prepareMigration(address _newStrategy) internal override {
         // TODO: Transfer any non-`want` tokens to the new strategy
@@ -380,7 +394,7 @@ contract Strategy is BaseStrategy, ICallee {
         }
 
         stkAaveBalance = IERC20(address(stkAave)).balanceOf(address(this));
-        if (stkAaveBalance > 1e15) {
+        if (stkAaveBalance >= minRewardToSell) {
             uint256 minAAVEOut = stkAaveBalance.mul(0.95 ether).div(1 ether);
             _sellSTKAAVEToAAVE(stkAaveBalance, minAAVEOut);
         }
@@ -388,8 +402,12 @@ contract Strategy is BaseStrategy, ICallee {
         // sell AAVE for want
         // a minimum balance of 0.01 AAVE is required
         uint256 aaveBalance = IERC20(aave).balanceOf(address(this));
-        if (aaveBalance > 1e15) {
-            _sellAAVEForWant(aaveBalance);
+        if (aaveBalance >= minRewardToSell) {
+            if (useUniV3) {
+                _sellAAVEForWantV3(aaveBalance, 0);
+            } else {
+                _sellAAVEForWantV2(aaveBalance);
+            }
         }
     }
 
@@ -440,7 +458,7 @@ contract Strategy is BaseStrategy, ICallee {
             }
         } else {
             for (
-                uint256 i = 0;
+                uint8 i = 0;
                 i < maxIterations && totalAmountToBorrow > minWant;
                 i++
             ) {
@@ -495,9 +513,8 @@ contract Strategy is BaseStrategy, ICallee {
             );
         }
 
-        uint256 i = 0;
         for (
-            uint256 i = 0;
+            uint8 i = 15;
             i < maxIterations && totalRepayAmount > minWant;
             i++
         ) {
@@ -509,12 +526,7 @@ contract Strategy is BaseStrategy, ICallee {
             uint256 repaid = _repayWant(toRepay);
             totalRepayAmount = totalRepayAmount.sub(repaid);
             // withdraw collateral
-            (uint256 deposits, uint256 borrows, ) = getCurrentPosition();
-            uint256 theoDeposits = borrows.mul(1e18).div(targetCollatRatio);
-            if (deposits > theoDeposits) {
-                uint256 toWithdraw = deposits.sub(theoDeposits);
-                _withdrawCollateral(toWithdraw);
-            }
+            _withdrawExcessCollateral();
         }
 
         // deposit back to get targetCollatRatio (we always need to leave this in this ratio)
@@ -523,7 +535,9 @@ contract Strategy is BaseStrategy, ICallee {
             targetCollatRatio > 0
                 ? borrows.mul(1e18).div(targetCollatRatio).sub(deposits)
                 : 0;
-        _depositCollateral(toDeposit);
+        if (toDeposit > minWant) {
+            _depositCollateral(toDeposit);
+        }
     }
 
     function _leverDownFlashLoan(uint256 amount) internal returns (uint256) {
@@ -535,13 +549,17 @@ contract Strategy is BaseStrategy, ICallee {
         uint256 repaid =
             FlashLoanLib.doDyDxFlashLoan(true, amount, address(want));
         // withdraw collateral
-        (deposits, borrows, ) = getCurrentPosition();
+        _withdrawExcessCollateral();
+        return repaid;
+    }
+
+    function _withdrawExcessCollateral() internal returns (uint256 amount) {
+        (uint256 deposits, uint256 borrows, ) = getCurrentPosition();
         uint256 theoDeposits = borrows.mul(1e18).div(maxCollatRatio);
         if (deposits > theoDeposits) {
             uint256 toWithdraw = deposits.sub(theoDeposits);
-            _withdrawCollateral(toWithdraw);
+            return _withdrawCollateral(toWithdraw);
         }
-        return repaid;
     }
 
     function _depositCollateral(uint256 amount) internal returns (uint256) {
@@ -592,6 +610,7 @@ contract Strategy is BaseStrategy, ICallee {
         return debtToken.balanceOf(address(this));
     }
 
+    // Flashloan callback function
     function callFunction(
         address sender,
         Account.Info memory account,
@@ -748,7 +767,7 @@ contract Strategy is BaseStrategy, ICallee {
         }
     }
 
-    function _sellAAVEForWant(uint256 _amount) internal {
+    function _sellAAVEForWantV2(uint256 _amount) internal {
         if (_amount == 0) {
             return;
         }
@@ -780,7 +799,7 @@ contract Strategy is BaseStrategy, ICallee {
         V3ROUTER.exactInputSingle(fromRewardToAAVEParams);
     }
 
-    function _fromAAVEToWant(uint256 amountIn, uint256 minOut) internal {
+    function _sellAAVEForWantV3(uint256 amountIn, uint256 minOut) internal {
         // We now have AAVE tokens, let's get want
         bytes memory path =
             abi.encodePacked(

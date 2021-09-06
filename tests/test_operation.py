@@ -30,45 +30,31 @@ def test_operation(
         pytest.approx(token.balanceOf(user), rel=RELATIVE_APPROX) == user_balance_before
     )
 
+def test_big_operation(
+    chain, accounts, token, vault, strategy, user, strategist, big_amount, RELATIVE_APPROX
+):
+    # Deposit to the vault
+    user_balance_before = token.balanceOf(user)
+    actions.user_deposit(user, vault, token, big_amount)
 
-# def test_skaave_cooldown(
-#     chain, accounts, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
-# ):
-#     # Deposit to the vault
-#     user_balance_before = token.balanceOf(user)
-#     actions.user_deposit(user, vault, token, amount)
-#
-#     # harvest
-#     chain.sleep(1)
-#     strategy.harvest({"from": strategist})
-#     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
-#
-#     utils.strategy_status(vault, strategy)
-#
-#     # tend()
-#     strategy.tend({"from": strategist})
-#
-#     # 4 hours to generate yield
-#     utils.sleep(int(4 * 3600))
-#     tx = strategy.harvest({"from": strategist})
-#     assert(tx.events["Cooldown"]["user"] == strategy)
-#     checks.check_harvest_profitable(tx)
-#
-#     utils.strategy_status(vault, strategy)
-#
-#     # ~10 days to wait for cooldown
-#     utils.sleep(int(10.1 * 24 * 3600))
-#     tx = strategy.harvest({"from": strategist})
-#     checks.check_harvest_profitable(tx)
-#     assert(False)
-#
-#     utils.strategy_status(vault, strategy)
-#
-#     # withdrawal
-#     vault.withdraw({"from": user})
-#     assert (
-#         token.balanceOf(user) > user_balance_before
-#     )
+    # harvest
+    chain.sleep(1)
+    strategy.harvest({"from": strategist})
+    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == big_amount
+
+    utils.strategy_status(vault, strategy)
+
+    # tend()
+    strategy.tend({"from": strategist})
+
+    utils.sleep(3 * 24 * 3600)
+    strategy.harvest({"from": strategist})
+
+    # withdrawal
+    vault.withdraw({"from": user})
+    assert (
+        pytest.approx(token.balanceOf(user), rel=RELATIVE_APPROX) == user_balance_before
+    )
 
 
 def test_emergency_exit(
@@ -125,8 +111,6 @@ def test_decrease_debt_ratio(
     vault.updateStrategyDebtRatio(strategy.address, 5_000, {"from": gov})
     utils.sleep(1)
     strategy.harvest({"from": strategist})
-    utils.sleep(1)
-    strategy.harvest({"from": strategist})
 
     utils.strategy_status(vault, strategy)
 
@@ -149,8 +133,6 @@ def test_large_deleverage(
 
     # Two harvests needed to unlock
     vault.updateStrategyDebtRatio(strategy.address, 1_000, {"from": gov})
-    utils.sleep(1)
-    strategy.harvest({"from": strategist})
     utils.sleep(1)
     strategy.harvest({"from": strategist})
 
@@ -176,10 +158,7 @@ def test_larger_deleverage(
         == big_amount
     )
 
-    # Two harvests needed to unlock
     vault.updateStrategyDebtRatio(strategy.address, 1_000, {"from": gov})
-    utils.sleep(1)
-    strategy.harvest({"from": strategist})
     utils.sleep(1)
     strategy.harvest({"from": strategist})
 

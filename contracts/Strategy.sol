@@ -74,14 +74,14 @@ contract Strategy is BaseStrategy, ICallee {
     uint8 public maxIterations = 6;
     uint256 public maxStkAavePriceImpactBps = 500;
     uint256 public pessimismFactor = 1000;
+    bool public cooldownStkAave = false;
     bool public sellStkAave = true;
     bool public useUniV3 = false;
     bool public isDyDxActive = true;
 
-    // Aave's referral code
-    uint16 internal referral = 0;
+    uint16 internal referral; // Aave's referral code
+    bool internal already_adjusted; // Signal whether a position adjust was done in prepareReturn
 
-    // TODO: review decimals
     uint256 private constant MAX_BPS = 1e4;
     uint256 private constant COLLATERAL_RATIO_PRECISION = 1 ether;
     uint256 private DECIMALS;
@@ -91,17 +91,36 @@ contract Strategy is BaseStrategy, ICallee {
     }
 
     function _initializeThis() internal {
+        // initialize operational state
+        minRatio = 0.005 ether;
+        minRewardToSell = 1e15;
+        maxIterations = 6;
+        maxStkAavePriceImpactBps = 500;
+        pessimismFactor = 1000;
+        cooldownStkAave = false;
+        sellStkAave = true;
+        useUniV3 = false;
+        isDyDxActive = true;
+
+        // Set aave tokens
         (address _aToken, , address _debtToken) =
             protocolDataProvider.getReserveTokensAddresses(address(want));
         aToken = IAToken(_aToken);
         debtToken = IVariableDebtToken(_debtToken);
+
+        // Let collateral targets
         (, uint256 ltv, uint256 liquidationThreshold, , , , , , , ) =
             protocolDataProvider.getReserveConfigurationData(address(want));
-        maxBorrowCollatRatio = ltv * 10**14 - DEFAULT_COLLAT_MAX_MARGIN;
-        liquidationThreshold = liquidationThreshold * 10**14; // convert bps to wad
-        targetCollatRatio = _getTargetLTV(liquidationThreshold);
-        maxCollatRatio = _getWarningLTV(liquidationThreshold);
+        liquidationThreshold = liquidationThreshold.mul(10**14); // convert bps to wad
+        targetCollatRatio = liquidationThreshold.sub(
+            DEFAULT_COLLAT_TARGET_MARGIN
+        );
+        maxCollatRatio = liquidationThreshold.sub(DEFAULT_COLLAT_MAX_MARGIN);
+        maxBorrowCollatRatio = ltv.mul(10**14).sub(DEFAULT_COLLAT_MAX_MARGIN);
+
         DECIMALS = 10**vault.decimals();
+
+        // approve spend
         IERC20(address(stkAave)).safeApprove(
             address(V3ROUTER),
             type(uint256).max
@@ -116,11 +135,21 @@ contract Strategy is BaseStrategy, ICallee {
 
     // SETTERS
     // TODO: add setters for thesholds
-    function setTargetCollatRatio(uint256 _targetCollatRatio)
-        external
-        onlyVaultManagers
-    {
-        targetCollatRatio = _targetCollatRatio;
+    function setCollateralTargets(
+        uint256 _targetCollatRatio,
+        uint256 _maxCollatRatio,
+        uint256 _maxBorrowCollatRatio
+    ) external onlyVaultManagers {
+        (, uint256 ltv, uint256 liquidationThreshold, , , , , , , ) =
+            protocolDataProvider.getReserveConfigurationData(address(want));
+        targetCollatRatio = _maxCollatRatio;
+        maxCollatRatio = _maxCollatRatio;
+        maxBorrowCollatRatio = _maxBorrowCollatRatio;
+
+        require(targetCollatRatio < liquidationThreshold);
+        require(maxCollatRatio < liquidationThreshold);
+        require(targetCollatRatio < maxCollatRatio);
+        require(maxBorrowCollatRatio < ltv);
     }
 
     function setMinWant(uint256 _minWant) external onlyVaultManagers {
@@ -166,9 +195,8 @@ contract Strategy is BaseStrategy, ICallee {
     }
 
     function estimatedRewardsInWant() public view returns (uint256) {
-        uint256 aaveBalance = IERC20(aave).balanceOf(address(this));
-        uint256 stkAaveBalance =
-            IERC20(address(stkAave)).balanceOf(address(this));
+        uint256 aaveBalance = balanceOfAave();
+        uint256 stkAaveBalance = balanceOfStkAave();
 
         uint256 combinedBalance =
             aaveBalance.add(
@@ -203,6 +231,7 @@ contract Strategy is BaseStrategy, ICallee {
                 .mul(supplyAavePerSecond)
                 .mul(secondsSinceLastReport)
                 .div(DECIMALS);
+
         // Shortcut if no borrows
         if (borrows == 0 || totalBorrows == 0) {
             return tokenToWant(aave, supplyRewards.add(combinedBalance));
@@ -254,17 +283,31 @@ contract Strategy is BaseStrategy, ICallee {
         uint256 amountRequired = _debtOutstanding.add(_profit);
 
         if (amountRequired > amountAvailable) {
-            if (_debtOutstanding >= amountAvailable) {
-                // available funds are lower than the repayment that we need to do
-                _profit = 0;
-                _debtPayment = amountAvailable;
-                // we dont report losses here as the strategy might not be able to return in this harvest
-                // but it will still be there for the next harvest
-            } else {
-                // NOTE: amountRequired is always equal or greater than _debtOutstanding
-                // important to use amountRequired just in case amountAvailable is > amountAvailable
+            // we need to free funds
+            // we dismiss losses here, they cannot be generated from withdrawal
+            // but it is possible for the strategy to unwind full position
+            (amountAvailable, ) = liquidatePosition(amountRequired);
+            already_adjusted = true;
+            if (amountAvailable >= amountRequired) {
                 _debtPayment = _debtOutstanding;
-                _profit = amountAvailable.sub(_debtPayment);
+                // profit remains unchanged unless there is not enough to pay it
+                if (amountRequired.sub(_debtPayment) < _profit) {
+                    _profit = amountRequired.sub(_debtPayment);
+                }
+            } else {
+                // we were not able to free enough funds
+                if (amountAvailable < _debtOutstanding) {
+                    // available funds are lower than the repayment that we need to do
+                    _profit = 0;
+                    _debtPayment = amountAvailable;
+                    // we dont report losses here as the strategy might not be able to return in this harvest
+                    // but it will still be there for the next harvest
+                } else {
+                    // NOTE: amountRequired is always equal or greater than _debtOutstanding
+                    // important to use amountRequired just in case amountAvailable is > amountAvailable
+                    _debtPayment = _debtOutstanding;
+                    _profit = amountAvailable.sub(_debtPayment);
+                }
             }
         } else {
             _debtPayment = _debtOutstanding;
@@ -276,6 +319,11 @@ contract Strategy is BaseStrategy, ICallee {
     }
 
     function adjustPosition(uint256 _debtOutstanding) internal override {
+        if (already_adjusted) {
+            already_adjusted = false; // reset for next time
+            return;
+        }
+
         uint256 wantBalance = balanceOfWant();
         // deposit available want as collateral
         if (
@@ -355,7 +403,9 @@ contract Strategy is BaseStrategy, ICallee {
 
     function _claimAndSellRewards() internal returns (uint256) {
         uint256 stkAaveBalance = balanceOfStkAave();
-        if (_checkCooldown() && stkAaveBalance > 0) {
+        uint8 cooldownStatus = stkAaveBalance == 0 ? 0 : _checkCooldown(); // don't check status if we have no stkAave
+
+        if (stkAaveBalance > 0 && cooldownStatus == 1) {
             // redeem AAVE from stkAave
             stkAave.claimRewards(address(this), type(uint256).max);
             stkAave.redeem(address(this), stkAaveBalance);
@@ -372,34 +422,23 @@ contract Strategy is BaseStrategy, ICallee {
             address(this)
         );
 
+        stkAaveBalance = balanceOfStkAave();
+
         // request start of cooldown period
-        uint256 cooldownStartTimestamp =
-            stkAave.stakersCooldowns(address(this));
-        uint256 COOLDOWN_SECONDS = stkAave.COOLDOWN_SECONDS();
-        uint256 UNSTAKE_WINDOW = stkAave.UNSTAKE_WINDOW();
-        if (
-            stkAaveBalance > 0 &&
-            (// cooldown not started
-            (cooldownStartTimestamp == 0) ||
-                // cooldown window is passed
-                (cooldownStartTimestamp > 0 &&
-                    block.timestamp >
-                    cooldownStartTimestamp.add(COOLDOWN_SECONDS).add(
-                        UNSTAKE_WINDOW
-                    )))
-        ) {
+        if (cooldownStkAave && stkAaveBalance > 0 && cooldownStatus == 0) {
             stkAave.cooldown();
         }
 
         // Always keep 1 wei to get around cooldown clear
-        stkAaveBalance = balanceOfStkAave();
         if (stkAaveBalance >= minRewardToSell.add(1)) {
-            uint256 minAAVEOut = stkAaveBalance.mul(0.95 ether).div(1 ether);
+            uint256 minAAVEOut =
+                stkAaveBalance.mul(MAX_BPS.sub(maxStkAavePriceImpactBps)).div(
+                    MAX_BPS
+                );
             _sellSTKAAVEToAAVE(stkAaveBalance.sub(1), minAAVEOut);
         }
 
         // sell AAVE for want
-        // a minimum balance of 0.01 AAVE is required
         uint256 aaveBalance = balanceOfAave();
         if (aaveBalance >= minRewardToSell) {
             _sellAAVEForWant(aaveBalance, 0);
@@ -705,16 +744,30 @@ contract Strategy is BaseStrategy, ICallee {
             );
     }
 
-    function _checkCooldown() internal view returns (bool) {
+    // returns cooldown status
+    // 0 = no cooldown or past withdraw period
+    // 1 = claim period
+    // 2 = cooldown initiated, future claim period
+    function _checkCooldown() internal view returns (uint8) {
         uint256 cooldownStartTimestamp =
             IStakedAave(stkAave).stakersCooldowns(address(this));
         uint256 COOLDOWN_SECONDS = IStakedAave(stkAave).COOLDOWN_SECONDS();
         uint256 UNSTAKE_WINDOW = IStakedAave(stkAave).UNSTAKE_WINDOW();
-        return
-            cooldownStartTimestamp != 0 &&
-            block.timestamp > cooldownStartTimestamp.add(COOLDOWN_SECONDS) &&
-            block.timestamp <=
-            cooldownStartTimestamp.add(COOLDOWN_SECONDS).add(UNSTAKE_WINDOW);
+        uint256 nextClaimStartTimestamp =
+            cooldownStartTimestamp.sub(COOLDOWN_SECONDS);
+
+        if (cooldownStartTimestamp == 0) {
+            return 0;
+        }
+        if (
+            block.timestamp > nextClaimStartTimestamp &&
+            block.timestamp <= nextClaimStartTimestamp.add(UNSTAKE_WINDOW)
+        ) {
+            return 1;
+        }
+        if (block.timestamp < nextClaimStartTimestamp) {
+            return 2;
+        }
     }
 
     function _checkAllowance(
@@ -726,37 +779,6 @@ contract Strategy is BaseStrategy, ICallee {
             IERC20(_token).safeApprove(_contract, 0);
             IERC20(_token).safeApprove(_contract, type(uint256).max);
         }
-    }
-
-    function _getAaveUserAccountData()
-        internal
-        view
-        returns (
-            uint256 totalCollateralETH,
-            uint256 totalDebtETH,
-            uint256 availableBorrowsETH,
-            uint256 currentLiquidationThreshold,
-            uint256 ltv,
-            uint256 healthFactor
-        )
-    {
-        return _lendingPool().getUserAccountData(address(this));
-    }
-
-    function _getTargetLTV(uint256 liquidationThreshold)
-        internal
-        pure
-        returns (uint256)
-    {
-        return liquidationThreshold.sub(DEFAULT_COLLAT_TARGET_MARGIN);
-    }
-
-    function _getWarningLTV(uint256 liquidationThreshold)
-        internal
-        pure
-        returns (uint256)
-    {
-        return liquidationThreshold.sub(DEFAULT_COLLAT_MAX_MARGIN);
     }
 
     function getTokenOutPath(address _token_in, address _token_out)

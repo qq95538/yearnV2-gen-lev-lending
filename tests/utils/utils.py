@@ -19,13 +19,12 @@ def strategy_status(vault, strategy):
     print(f"Total Debt {to_units(vault, status['totalDebt'])}")
     print(f"Total Gain {to_units(vault, status['totalGain'])}")
     print(f"Total Loss {to_units(vault, status['totalLoss'])}")
+    print(f"Estimated Total Assets {to_units(vault, strategy.estimatedTotalAssets())}")
     print(f"Current Lend {to_units(vault, lend)}")
     print(f"Current Borrow {to_units(vault, borrow)}")
     print(f"Current LTV Ratio {ratio/1e18:.4f}")
     print(f"Target LTV Ratio {strategy.targetCollatRatio()/1e18:.4f}")
     print(f"Max LTV Ratio {strategy.maxCollatRatio()/1e18:.4f}")
-    print(f"Max LTV Ratio {strategy.maxBorrowCollatRatio()/1e18:.4f}")
-
 
 
 def to_units(token, amount):

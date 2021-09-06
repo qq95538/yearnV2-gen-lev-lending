@@ -14,24 +14,24 @@ def test_profitable_harvest(
     total_assets = strategy.estimatedTotalAssets()
     assert pytest.approx(total_assets, rel=RELATIVE_APPROX) == amount
 
-    # TODO: Add some code before harvest #2 to simulate earning yield
-    profit_amount = 0
-    actions.generate_profit(profit_amount)
+    utils.strategy_status(vault, strategy)
 
-    # check that estimatedTotalAssets estimates correctly
-    assert total_assets + profit_amount == strategy.estimatedTotalAssets()
+    # Sleep to generate yield
+    utils.sleep(2 * 24 * 3600)
+
+    utils.strategy_status(vault, strategy)
 
     before_pps = vault.pricePerShare()
     # Harvest 2: Realize profit
-    chain.sleep(1)
-    tx = strategy.harvest({"from": strategist})
-    checks.check_harvest_profit(tx, profit_amount)
+    strategy.harvest({"from": strategist})
+
+    utils.strategy_status(vault, strategy)
 
     chain.sleep(3600 * 6)  # 6 hrs needed for profits to unlock
     chain.mine(1)
     profit = token.balanceOf(vault.address)  # Profits go to vault
 
-    assert token.balanceOf(strategy) + profit > amount
+    assert strategy.estimatedTotalAssets() + profit > amount
     assert vault.pricePerShare() > before_pps
 
 

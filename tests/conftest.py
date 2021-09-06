@@ -66,7 +66,7 @@ token_addresses = {
 # TODO: uncomment those tokens you want to test as want
 @pytest.fixture(
     params=[
-        'WBTC', # WBTC
+        "WBTC",  # WBTC
         # "YFI",  # YFI
         # "WETH",  # WETH
         # 'LINK', # LINK
@@ -119,6 +119,19 @@ def amount(token, token_whale, user):
         amount = token.balanceOf(token_whale)
     token.transfer(user, amount, {"from": token_whale})
     yield amount
+
+
+@pytest.fixture()
+def big_amount(token, token_whale, user):
+    # this will get the number of tokens (around $49m worth of token)
+    fifty_minus_one_million = round(49_000_000 / token_prices[token.symbol()])
+    amount = fifty_minus_one_million * 10 ** token.decimals()
+    # In order to get some funds for the token you are about to use,
+    # it impersonate a whale address
+    if amount > token.balanceOf(token_whale):
+        amount = token.balanceOf(token_whale)
+    token.transfer(user, amount, {"from": token_whale})
+    yield token.balanceOf(user)
 
 
 @pytest.fixture
@@ -180,7 +193,7 @@ def cloned_strategy(Strategy, vault, strategy, strategist, gov):
     yield
 
 
-#@pytest.fixture(autouse=True)
+# @pytest.fixture(autouse=True)
 def withdraw_no_losses(vault, token, amount, user):
     yield
     if vault.totalSupply() != 0:

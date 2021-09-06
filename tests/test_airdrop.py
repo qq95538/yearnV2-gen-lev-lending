@@ -40,6 +40,5 @@ def test_airdrop(
     chain.sleep(3600 * 6)  # 6 hrs needed for profits to unlock
     chain.mine(1)
     profit = token.balanceOf(vault.address)  # Profits go to vault
-    # TODO: Uncomment the lines below
-    assert token.balanceOf(strategy) + profit > amount
+    assert vault.strategies(strategy).dict()["totalDebt"] + profit > amount
     assert vault.pricePerShare() > before_pps

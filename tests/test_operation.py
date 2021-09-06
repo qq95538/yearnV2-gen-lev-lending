@@ -31,6 +31,46 @@ def test_operation(
     )
 
 
+# def test_skaave_cooldown(
+#     chain, accounts, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+# ):
+#     # Deposit to the vault
+#     user_balance_before = token.balanceOf(user)
+#     actions.user_deposit(user, vault, token, amount)
+#
+#     # harvest
+#     chain.sleep(1)
+#     strategy.harvest({"from": strategist})
+#     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
+#
+#     utils.strategy_status(vault, strategy)
+#
+#     # tend()
+#     strategy.tend({"from": strategist})
+#
+#     # 4 hours to generate yield
+#     utils.sleep(int(4 * 3600))
+#     tx = strategy.harvest({"from": strategist})
+#     assert(tx.events["Cooldown"]["user"] == strategy)
+#     checks.check_harvest_profitable(tx)
+#
+#     utils.strategy_status(vault, strategy)
+#
+#     # ~10 days to wait for cooldown
+#     utils.sleep(int(10.1 * 24 * 3600))
+#     tx = strategy.harvest({"from": strategist})
+#     checks.check_harvest_profitable(tx)
+#     assert(False)
+#
+#     utils.strategy_status(vault, strategy)
+#
+#     # withdrawal
+#     vault.withdraw({"from": user})
+#     assert (
+#         token.balanceOf(user) > user_balance_before
+#     )
+
+
 def test_emergency_exit(
     chain, accounts, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
 ):
@@ -74,19 +114,79 @@ def test_decrease_debt_ratio(
     # Deposit to the vault and harvest
     actions.user_deposit(user, vault, token, amount)
     vault.updateStrategyDebtRatio(strategy.address, 10_000, {"from": gov})
-    chain.sleep(1)
+    utils.sleep(1)
     strategy.harvest({"from": strategist})
+
+    utils.strategy_status(vault, strategy)
 
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
+    # Two harvests needed to unlock
     vault.updateStrategyDebtRatio(strategy.address, 5_000, {"from": gov})
-    chain.sleep(1)
+    utils.sleep(1)
+    strategy.harvest({"from": strategist})
+    utils.sleep(1)
     strategy.harvest({"from": strategist})
 
     utils.strategy_status(vault, strategy)
 
     half = int(amount / 2)
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == half
+
+
+def test_large_deleverage(
+    chain, gov, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+):
+    # Deposit to the vault and harvest
+    actions.user_deposit(user, vault, token, amount)
+    vault.updateStrategyDebtRatio(strategy.address, 10_000, {"from": gov})
+    utils.sleep(1)
+    strategy.harvest({"from": strategist})
+
+    utils.strategy_status(vault, strategy)
+
+    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
+
+    # Two harvests needed to unlock
+    vault.updateStrategyDebtRatio(strategy.address, 1_000, {"from": gov})
+    utils.sleep(1)
+    strategy.harvest({"from": strategist})
+    utils.sleep(1)
+    strategy.harvest({"from": strategist})
+
+    utils.strategy_status(vault, strategy)
+
+    tenth = int(amount / 10)
+    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == tenth
+
+
+def test_larger_deleverage(
+    chain, gov, token, vault, strategy, user, strategist, big_amount, RELATIVE_APPROX
+):
+    # Deposit to the vault and harvest
+    actions.user_deposit(user, vault, token, big_amount)
+    vault.updateStrategyDebtRatio(strategy.address, 10_000, {"from": gov})
+    utils.sleep(1)
+    strategy.harvest({"from": strategist})
+
+    utils.strategy_status(vault, strategy)
+
+    assert (
+        pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX)
+        == big_amount
+    )
+
+    # Two harvests needed to unlock
+    vault.updateStrategyDebtRatio(strategy.address, 1_000, {"from": gov})
+    utils.sleep(1)
+    strategy.harvest({"from": strategist})
+    utils.sleep(1)
+    strategy.harvest({"from": strategist})
+
+    utils.strategy_status(vault, strategy)
+
+    tenth = int(big_amount / 10)
+    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == tenth
 
 
 def test_sweep(gov, vault, strategy, token, user, amount, weth, weth_amount):
@@ -101,7 +201,9 @@ def test_sweep(gov, vault, strategy, token, user, amount, weth, weth_amount):
     with brownie.reverts("!shares"):
         strategy.sweep(vault.address, {"from": gov})
 
-    before_balance = weth.balanceOf(gov) + weth.balanceOf(strategy) # strategy has some weth to pay for flashloans 
+    before_balance = weth.balanceOf(gov) + weth.balanceOf(
+        strategy
+    )  # strategy has some weth to pay for flashloans
     weth.transfer(strategy, weth_amount, {"from": user})
     assert weth.address != strategy.want()
     assert weth.balanceOf(user) == 0

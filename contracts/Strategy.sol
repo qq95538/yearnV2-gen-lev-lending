@@ -62,14 +62,14 @@ contract Strategy is BaseStrategy, ICallee {
     address private constant weth = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
 
     // OPS State Variables
-    uint256 private constant COLLAT_TARGET_MARGIN = 0.02 ether;
-    uint256 private constant COLLAT_MAX_MARGIN = 0.005 ether;
+    uint256 private constant DEFAULT_COLLAT_TARGET_MARGIN = 0.02 ether;
+    uint256 private constant DEFAULT_COLLAT_MAX_MARGIN = 0.005 ether;
     uint256 public maxBorrowCollatRatio; // The maximum the aave protocol will let us borrow
     uint256 public targetCollatRatio; // The LTV we are levering up to
     uint256 public maxCollatRatio; // Closest to liquidation we'll risk
 
     uint256 public minWant = 100;
-    uint256 public minRatio;
+    uint256 public minRatio = 0.005 ether;
     uint256 public minRewardToSell = 1e15;
     uint8 public maxIterations = 6;
     uint256 public maxStkAavePriceImpactBps = 500;
@@ -84,22 +84,24 @@ contract Strategy is BaseStrategy, ICallee {
     // TODO: review decimals
     uint256 private constant MAX_BPS = 1e4;
     uint256 private constant COLLATERAL_RATIO_PRECISION = 1 ether;
-    uint256 private immutable DECIMALS;
+    uint256 private DECIMALS;
 
     constructor(address _vault) public BaseStrategy(_vault) {
+        _initializeThis();
+    }
+
+    function _initializeThis() internal {
         (address _aToken, , address _debtToken) =
             protocolDataProvider.getReserveTokensAddresses(address(want));
         aToken = IAToken(_aToken);
         debtToken = IVariableDebtToken(_debtToken);
         (, uint256 ltv, uint256 liquidationThreshold, , , , , , , ) =
             protocolDataProvider.getReserveConfigurationData(address(want));
-        maxBorrowCollatRatio = ltv * 10**14 - COLLAT_MAX_MARGIN;
+        maxBorrowCollatRatio = ltv * 10**14 - DEFAULT_COLLAT_MAX_MARGIN;
         liquidationThreshold = liquidationThreshold * 10**14; // convert bps to wad
         targetCollatRatio = _getTargetLTV(liquidationThreshold);
         maxCollatRatio = _getWarningLTV(liquidationThreshold);
         DECIMALS = 10**vault.decimals();
-        IERC20(aave).safeApprove(address(V2ROUTER), type(uint256).max);
-        IERC20(aave).safeApprove(address(V3ROUTER), type(uint256).max);
         IERC20(address(stkAave)).safeApprove(
             address(V3ROUTER),
             type(uint256).max
@@ -175,8 +177,6 @@ contract Strategy is BaseStrategy, ICallee {
                 )
             );
 
-        // NOTE: assuming 13s between blocks
-        // NOTE: no problem in using block.timestamp. no decisions are taken using this
         uint256 lastReport = vault.strategies(address(this)).lastReport;
         if (lastReport >= block.timestamp) {
             return 0;
@@ -354,8 +354,13 @@ contract Strategy is BaseStrategy, ICallee {
     // INTERNAL ACTIONS
 
     function _claimAndSellRewards() internal returns (uint256) {
-        // claim rewards
-        // only add to assets those assets that are incentivised
+        uint256 stkAaveBalance = balanceOfStkAave();
+        if (_checkCooldown() && stkAaveBalance > 0) {
+            // redeem AAVE from stkAave
+            stkAave.claimRewards(address(this), type(uint256).max);
+            stkAave.redeem(address(this), stkAaveBalance);
+        }
+
         address[] memory assets;
         assets = new address[](2);
         assets[0] = address(aToken);
@@ -367,47 +372,37 @@ contract Strategy is BaseStrategy, ICallee {
             address(this)
         );
 
-        // redeem AAVE from stkAave
-        uint256 stkAaveBalance =
-            IERC20(address(stkAave)).balanceOf(address(this));
-        if (stkAaveBalance > 0 && _checkCooldown()) {
-            // claim AAVE rewards
-            stkAave.claimRewards(address(this), type(uint256).max);
-            stkAave.redeem(address(this), stkAaveBalance);
-        }
-
         // request start of cooldown period
         uint256 cooldownStartTimestamp =
             stkAave.stakersCooldowns(address(this));
         uint256 COOLDOWN_SECONDS = stkAave.COOLDOWN_SECONDS();
         uint256 UNSTAKE_WINDOW = stkAave.UNSTAKE_WINDOW();
         if (
-            (IERC20(address(stkAave)).balanceOf(address(this)) > 0 &&
-                cooldownStartTimestamp == 0) ||
-            (block.timestamp >
-                cooldownStartTimestamp.add(COOLDOWN_SECONDS).add(
-                    UNSTAKE_WINDOW
-                ) &&
-                cooldownStartTimestamp > 0)
+            stkAaveBalance > 0 &&
+            (// cooldown not started
+            (cooldownStartTimestamp == 0) ||
+                // cooldown window is passed
+                (cooldownStartTimestamp > 0 &&
+                    block.timestamp >
+                    cooldownStartTimestamp.add(COOLDOWN_SECONDS).add(
+                        UNSTAKE_WINDOW
+                    )))
         ) {
             stkAave.cooldown();
         }
 
-        stkAaveBalance = IERC20(address(stkAave)).balanceOf(address(this));
-        if (stkAaveBalance >= minRewardToSell) {
+        // Always keep 1 wei to get around cooldown clear
+        stkAaveBalance = balanceOfStkAave();
+        if (stkAaveBalance >= minRewardToSell.add(1)) {
             uint256 minAAVEOut = stkAaveBalance.mul(0.95 ether).div(1 ether);
-            _sellSTKAAVEToAAVE(stkAaveBalance, minAAVEOut);
+            _sellSTKAAVEToAAVE(stkAaveBalance.sub(1), minAAVEOut);
         }
 
         // sell AAVE for want
         // a minimum balance of 0.01 AAVE is required
-        uint256 aaveBalance = IERC20(aave).balanceOf(address(this));
+        uint256 aaveBalance = balanceOfAave();
         if (aaveBalance >= minRewardToSell) {
-            if (useUniV3) {
-                _sellAAVEForWantV3(aaveBalance, 0);
-            } else {
-                _sellAAVEForWantV2(aaveBalance);
-            }
+            _sellAAVEForWant(aaveBalance, 0);
         }
     }
 
@@ -479,19 +474,26 @@ contract Strategy is BaseStrategy, ICallee {
         }
 
         uint256 wantBalance = balanceOfWant();
-        // deposit available want as collateral
-        _depositCollateral(wantBalance);
 
         // calculate how much borrow can I take
         (uint256 deposits, uint256 borrows, ) = getCurrentPosition();
         uint256 canBorrow =
-            deposits
-                .mul(maxBorrowCollatRatio)
-                .div(COLLATERAL_RATIO_PRECISION)
-                .sub(borrows);
+            deposits.add(wantBalance).mul(maxBorrowCollatRatio).div(
+                COLLATERAL_RATIO_PRECISION
+            );
+
+        if (canBorrow <= borrows) {
+            return 0;
+        }
+        canBorrow = canBorrow.sub(borrows);
+
         if (canBorrow < amount) {
             amount = canBorrow;
         }
+
+        // deposit available want as collateral
+        _depositCollateral(wantBalance);
+
         // borrow available collateral
         _borrowWant(amount);
 
@@ -608,6 +610,14 @@ contract Strategy is BaseStrategy, ICallee {
 
     function balanceOfDebtToken() internal view returns (uint256) {
         return debtToken.balanceOf(address(this));
+    }
+
+    function balanceOfAave() internal view returns (uint256) {
+        return IERC20(aave).balanceOf(address(this));
+    }
+
+    function balanceOfStkAave() internal view returns (uint256) {
+        return IERC20(address(stkAave)).balanceOf(address(this));
     }
 
     // Flashloan callback function
@@ -738,7 +748,7 @@ contract Strategy is BaseStrategy, ICallee {
         pure
         returns (uint256)
     {
-        return liquidationThreshold.sub(COLLAT_TARGET_MARGIN);
+        return liquidationThreshold.sub(DEFAULT_COLLAT_TARGET_MARGIN);
     }
 
     function _getWarningLTV(uint256 liquidationThreshold)
@@ -746,7 +756,7 @@ contract Strategy is BaseStrategy, ICallee {
         pure
         returns (uint256)
     {
-        return liquidationThreshold.sub(COLLAT_MAX_MARGIN);
+        return liquidationThreshold.sub(DEFAULT_COLLAT_MAX_MARGIN);
     }
 
     function getTokenOutPath(address _token_in, address _token_out)
@@ -767,19 +777,40 @@ contract Strategy is BaseStrategy, ICallee {
         }
     }
 
-    function _sellAAVEForWantV2(uint256 _amount) internal {
-        if (_amount == 0) {
+    function _sellAAVEForWant(uint256 amountIn, uint256 minOut) internal {
+        if (amountIn == 0) {
             return;
         }
+        if (!useUniV3) {
+            _checkAllowance(address(V2ROUTER), address(aave), amountIn);
+            V2ROUTER.swapExactTokensForTokens(
+                amountIn,
+                minOut,
+                getTokenOutPath(address(aave), address(want)),
+                address(this),
+                now
+            );
+        } else {
+            _checkAllowance(address(V3ROUTER), address(aave), amountIn);
+            bytes memory path =
+                abi.encodePacked(
+                    address(aave),
+                    uint24(10000),
+                    address(weth),
+                    uint24(10000),
+                    address(want)
+                );
 
-        _checkAllowance(address(V2ROUTER), address(aave), _amount);
-        V2ROUTER.swapExactTokensForTokens(
-            _amount,
-            0,
-            getTokenOutPath(address(aave), address(want)),
-            address(this),
-            now
-        );
+            ISwapRouter.ExactInputParams memory fromAAVETowBTCParams =
+                ISwapRouter.ExactInputParams(
+                    path,
+                    address(this),
+                    now,
+                    amountIn,
+                    minOut
+                );
+            V3ROUTER.exactInput(fromAAVETowBTCParams);
+        }
     }
 
     function _sellSTKAAVEToAAVE(uint256 amountIn, uint256 minOut) internal {
@@ -801,23 +832,5 @@ contract Strategy is BaseStrategy, ICallee {
 
     function _sellAAVEForWantV3(uint256 amountIn, uint256 minOut) internal {
         // We now have AAVE tokens, let's get want
-        bytes memory path =
-            abi.encodePacked(
-                address(aave),
-                uint24(10000),
-                address(weth),
-                uint24(10000),
-                address(want)
-            );
-
-        ISwapRouter.ExactInputParams memory fromAAVETowBTCParams =
-            ISwapRouter.ExactInputParams(
-                path,
-                address(this),
-                now,
-                amountIn,
-                minOut
-            );
-        V3ROUTER.exactInput(fromAAVETowBTCParams);
     }
 }

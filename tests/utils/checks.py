@@ -25,6 +25,11 @@ def check_harvest_profit(tx, profit_amount):
     assert tx.events["Harvested"]["profit"] == profit_amount
 
 
+def check_harvest_profitable(tx):
+    assert tx.events["Harvested"]["profit"] > 0
+    assert tx.events["Harvested"]["loss"] == 0
+
+
 def check_harvest_loss(tx, loss_amount):
     assert tx.events["Harvested"]["loss"] == loss_amount
 

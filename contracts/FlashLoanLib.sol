@@ -27,6 +27,7 @@ library FlashLoanLib {
 
     address public constant SOLO = 0x1E0447b19BB6EcFdAe1e4AE1694b0C3659614e4e;
     uint256 private constant collatRatioETH = 0.79 ether;
+    uint256 private constant COLLAT_RATIO_PRECISION = 1 ether;
     address private constant weth = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     IAToken public constant aWeth =
         IAToken(0x030bA81f1c18d280636F32af80b9AAd02Cf0854e);
@@ -52,7 +53,7 @@ library FlashLoanLib {
         {
             // requiredETH = desiredTokenInETH / collatRatioETH
             // desiredTokenInETH = (desiredToken / priceETHBTC)
-            requiredETH = _toETH(amount, token).mul(1 ether).div(
+            requiredETH = _toETH(amount, token).mul(COLLAT_RATIO_PRECISION).div(
                 collatRatioETH
             );
 

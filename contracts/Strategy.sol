@@ -72,24 +72,24 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     uint256 public targetCollatRatio; // The LTV we are levering up to
     uint256 public maxCollatRatio; // Closest to liquidation we'll risk
 
+    uint8 public maxIterations = 6;
+    bool public isDyDxActive = true;
+
     uint256 public minWant = 100;
     uint256 public minRatio = 0.005 ether;
     uint256 public minRewardToSell = 1e15;
-
-    uint8 public maxIterations = 6;
-    bool public isDyDxActive = true;
-    uint256 public pessimismFactor = 1000;
 
     bool public sellStkAave = true;
     bool public cooldownStkAave = false;
     bool public useUniV3 = false; // only applied to aave => want, stkAave => aave always uses v3
     uint256 public maxStkAavePriceImpactBps = 500;
 
-    uint16 internal referral; // Aave's referral code
+    uint16 internal constant referral = 0; // Aave's referral code
     bool private alreadyAdjusted; // Signal whether a position adjust was done in prepareReturn
 
     uint256 private constant MAX_BPS = 1e4;
     uint256 private constant COLLATERAL_RATIO_PRECISION = 1 ether;
+    uint256 private constant PESSIMISM_FACTOR = 1000;
     uint256 private DECIMALS;
 
     constructor(address _vault) public BaseStrategyInitializable(_vault) {
@@ -112,16 +112,15 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         //healthCheck = address(0xDDCea799fF1699e98EDF118e0629A974Df7DF012); // health.ychad.eth
 
         // initialize operational state
+        maxIterations = 6;
+        isDyDxActive = true;
 
         // mins
         minWant = 100;
         minRatio = 0.005 ether;
         minRewardToSell = 1e15;
 
-        maxIterations = 6;
-        pessimismFactor = 1000;
-        isDyDxActive = true;
-
+        // reward params
         sellStkAave = true;
         cooldownStkAave = false;
         useUniV3 = false;
@@ -223,7 +222,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     function estimatedTotalAssets() public view override returns (uint256) {
         uint256 netAssets = getCurrentSupply();
         uint256 rewards =
-            estimatedRewardsInWant().mul(MAX_BPS - pessimismFactor).div(
+            estimatedRewardsInWant().mul(MAX_BPS - PESSIMISM_FACTOR).div(
                 MAX_BPS
             );
 

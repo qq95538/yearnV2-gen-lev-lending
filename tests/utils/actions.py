@@ -40,5 +40,5 @@ def first_deposit_and_harvest(
     vault.deposit(amount, {"from": user})
     chain.sleep(1)
     strategy.harvest({"from": gov})
-    utils.sleep()
+    utils.sleep(1)
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount

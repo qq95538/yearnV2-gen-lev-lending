@@ -129,7 +129,7 @@ def test_choppy_harvest(
     vault.withdraw({"from": user})
 
     # User will take 100% losses and 100% profits
-    #assert (
+    # assert (
     #    pytest.approx(token.balanceOf(user), rel=RELATIVE_APPROX)
     #    == amount + profit_amount - loss_amount
-    #)
+    # )

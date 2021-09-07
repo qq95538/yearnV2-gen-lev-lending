@@ -207,8 +207,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     }
 
     function estimatedTotalAssets() public view override returns (uint256) {
-        (uint256 deposits, uint256 borrows) = getCurrentPosition();
-        uint256 netAssets = deposits.sub(borrows);
+        uint256 netAssets = getCurrentSupply();
         uint256 rewards =
             estimatedRewardsInWant().mul(MAX_BPS - pessimismFactor).div(
                 MAX_BPS
@@ -274,8 +273,8 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         uint256 totalDebt = vault.strategies(address(this)).totalDebt;
 
         // Assets immediately convertable to want only
-        (uint256 deposits, uint256 borrows) = getCurrentPosition();
-        uint256 totalAssets = balanceOfWant().add(deposits).sub(borrows);
+        uint256 supply = getCurrentSupply();
+        uint256 totalAssets = balanceOfWant().add(supply);
 
         if (totalDebt > totalAssets) {
             // we have losses
@@ -438,6 +437,17 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         override
         returns (address[] memory)
     {}
+
+    //emergency function that we can use to deleverage manually if something is broken
+    function manualDeleverage(uint256 amount) external onlyVaultManagers {
+        _withdrawCollateral(amount);
+        _repayWant(amount);
+    }
+
+    //emergency function that we can use to deleverage manually if something is broken
+    function manualReleaseWant(uint256 amount) external onlyVaultManagers {
+        _withdrawCollateral(amount);
+    }
 
     // INTERNAL ACTIONS
 
@@ -663,6 +673,14 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         return want.balanceOf(address(this));
     }
 
+    function balanceOfAToken() internal view returns (uint256) {
+        return aToken.balanceOf(address(this));
+    }
+
+    function balanceOfDebtToken() internal view returns (uint256) {
+        return debtToken.balanceOf(address(this));
+    }
+
     function balanceOfAave() internal view returns (uint256) {
         return IERC20(aave).balanceOf(address(this));
     }
@@ -701,8 +719,8 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         view
         returns (uint256 deposits, uint256 borrows)
     {
-        deposits = aToken.balanceOf(address(this));
-        borrows = debtToken.balanceOf(address(this));
+        deposits = balanceOfAToken();
+        borrows = balanceOfDebtToken();
     }
 
     function getCurrentCollatRatio()
@@ -717,6 +735,12 @@ contract Strategy is BaseStrategyInitializable, ICallee {
                 deposits
             );
         }
+    }
+
+    function getCurrentSupply() public view returns (uint256 supply) {
+        (uint256 deposits, uint256 borrows) = getCurrentPosition();
+
+        supply = deposits.sub(borrows);
     }
 
     // conversions

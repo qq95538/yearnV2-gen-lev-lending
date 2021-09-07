@@ -75,13 +75,15 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     uint256 public minWant = 100;
     uint256 public minRatio = 0.005 ether;
     uint256 public minRewardToSell = 1e15;
+
     uint8 public maxIterations = 6;
-    uint256 public maxStkAavePriceImpactBps = 500;
-    uint256 public pessimismFactor = 1000;
-    bool public cooldownStkAave = false;
-    bool public sellStkAave = true;
-    bool public useUniV3 = false;
     bool public isDyDxActive = true;
+    uint256 public pessimismFactor = 1000;
+
+    bool public sellStkAave = true;
+    bool public cooldownStkAave = false;
+    bool public useUniV3 = false; // only applied to aave => want, stkAave => aave always uses v3
+    uint256 public maxStkAavePriceImpactBps = 500;
 
     uint16 internal referral; // Aave's referral code
     bool private alreadyAdjusted; // Signal whether a position adjust was done in prepareReturn
@@ -110,16 +112,20 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         //healthCheck = address(0xDDCea799fF1699e98EDF118e0629A974Df7DF012); // health.ychad.eth
 
         // initialize operational state
+
+        // mins
         minWant = 100;
         minRatio = 0.005 ether;
         minRewardToSell = 1e15;
+
         maxIterations = 6;
-        maxStkAavePriceImpactBps = 500;
         pessimismFactor = 1000;
-        cooldownStkAave = false;
-        sellStkAave = true;
-        useUniV3 = false;
         isDyDxActive = true;
+
+        sellStkAave = true;
+        cooldownStkAave = false;
+        useUniV3 = false;
+        maxStkAavePriceImpactBps = 500;
 
         // Set aave tokens
         (address _aToken, , address _debtToken) =
@@ -194,8 +200,16 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         maxIterations = _maxIterations;
     }
 
-    function setSellStkAave(bool _sellStkAave) external onlyVaultManagers {
+    function setRewardBehavior(
+        bool _sellStkAave,
+        bool _cooldownStkAave,
+        bool _useUniV3,
+        uint256 _maxBorrowCollatRatio
+    ) external onlyVaultManagers {
         sellStkAave = _sellStkAave;
+        cooldownStkAave = _cooldownStkAave;
+        useUniV3 = _useUniV3;
+        maxStkAavePriceImpactBps = _maxBorrowCollatRatio;
     }
 
     function setIsDyDxActive(bool _isDyDxActive) external onlyVaultManagers {

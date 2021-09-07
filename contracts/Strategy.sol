@@ -39,19 +39,24 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     using Address for address;
     using SafeMath for uint256;
 
-    // AAVE
+    // AAVE protocol address
     IProtocolDataProvider private constant protocolDataProvider =
         IProtocolDataProvider(0x057835Ad21a177dbdd3090bB1CAE03EaCF78Fc6d);
     IAaveIncentivesController private constant incentivesController =
         IAaveIncentivesController(0xd784927Ff2f95ba542BfC824c8a8a98F3495f6b5);
+    ILendingPool private constant lendingPool =
+        ILendingPool(0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9);
+
+    // Aave token addresses
     address private constant aave = 0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9;
     IStakedAave private constant stkAave =
         IStakedAave(0x4da27a545c0c5B758a6BA100e3a049001de870f5);
 
+    // Supply and borrow tokens
     IAToken public aToken;
     IVariableDebtToken public debtToken;
 
-    // SWAP
+    // SWAP routers
     IUni private constant V2ROUTER =
         IUni(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
     ISwapRouter private constant V3ROUTER =
@@ -62,6 +67,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     // OPS State Variables
     uint256 private constant DEFAULT_COLLAT_TARGET_MARGIN = 0.02 ether;
     uint256 private constant DEFAULT_COLLAT_MAX_MARGIN = 0.005 ether;
+    uint256 private constant LIQUIDATION_WARNING_THRESHOLD = 0.01 ether;
     uint256 public maxBorrowCollatRatio; // The maximum the aave protocol will let us borrow
     uint256 public targetCollatRatio; // The LTV we are levering up to
     uint256 public maxCollatRatio; // Closest to liquidation we'll risk
@@ -104,6 +110,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         //healthCheck = address(0xDDCea799fF1699e98EDF118e0629A974Df7DF012); // health.ychad.eth
 
         // initialize operational state
+        minWant = 100;
         minRatio = 0.005 ether;
         minRewardToSell = 1e15;
         maxIterations = 6;
@@ -132,17 +139,27 @@ contract Strategy is BaseStrategyInitializable, ICallee {
 
         DECIMALS = 10**vault.decimals();
 
-        // approve spend
+        // approve spend aave spend
+        want.safeApprove(address(lendingPool), type(uint256).max);
+        IERC20(address(aToken)).safeApprove(
+            address(lendingPool),
+            type(uint256).max
+        );
+
+        // approve flashloan spend
+        IERC20(address(weth)).safeApprove(
+            address(lendingPool),
+            type(uint256).max
+        );
+        IERC20(address(weth)).safeApprove(FlashLoanLib.SOLO, type(uint256).max);
+
+        // approve swap router spend
         IERC20(address(stkAave)).safeApprove(
             address(V3ROUTER),
             type(uint256).max
         );
-        want.safeApprove(_aToken, type(uint256).max);
-        IERC20(address(weth)).safeApprove(FlashLoanLib.SOLO, type(uint256).max);
-        IERC20(address(weth)).safeApprove(
-            address(_lendingPool()),
-            type(uint256).max
-        );
+        IERC20(address(aave)).safeApprove(address(V2ROUTER), type(uint256).max);
+        IERC20(address(aave)).safeApprove(address(V3ROUTER), type(uint256).max);
     }
 
     // SETTERS
@@ -190,7 +207,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     }
 
     function estimatedTotalAssets() public view override returns (uint256) {
-        (uint256 deposits, uint256 borrows, ) = getCurrentPosition();
+        (uint256 deposits, uint256 borrows) = getCurrentPosition();
         uint256 netAssets = deposits.sub(borrows);
         uint256 rewards =
             estimatedRewardsInWant().mul(MAX_BPS - pessimismFactor).div(
@@ -217,7 +234,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         }
         uint256 secondsSinceLastReport = block.timestamp.sub(lastReport);
 
-        (uint256 deposits, uint256 borrows, ) = getCurrentPosition();
+        (uint256 deposits, uint256 borrows) = getCurrentPosition();
 
         if (deposits == 0) {
             return tokenToWant(aave, combinedBalance);
@@ -257,7 +274,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         uint256 totalDebt = vault.strategies(address(this)).totalDebt;
 
         // Assets immediately convertable to want only
-        (uint256 deposits, uint256 borrows, ) = getCurrentPosition();
+        (uint256 deposits, uint256 borrows) = getCurrentPosition();
         uint256 totalAssets = balanceOfWant().add(deposits).sub(borrows);
 
         if (totalDebt > totalAssets) {
@@ -326,7 +343,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
             wantBalance = balanceOfWant();
         }
         // check current position
-        (, , uint256 currentCollatRatio) = getCurrentPosition();
+        uint256 currentCollatRatio = getCurrentCollatRatio();
 
         // Either we need to free some funds OR we want to be max levered
         if (_debtOutstanding > wantBalance) {
@@ -340,6 +357,16 @@ contract Strategy is BaseStrategyInitializable, ICallee {
             if (targetCollatRatio.sub(currentCollatRatio) > minRatio) {
                 // we only act on relevant differences
                 _leverMax();
+            }
+        } else if (currentCollatRatio > targetCollatRatio) {
+            if (currentCollatRatio.sub(targetCollatRatio) > minRatio) {
+                (uint256 deposits, uint256 borrows) = getCurrentPosition();
+                uint256 newBorrow =
+                    getBorrowFromSupply(
+                        deposits.sub(borrows),
+                        targetCollatRatio
+                    );
+                _leverDownTo(newBorrow, borrows);
             }
         }
     }
@@ -368,6 +395,28 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         } else {
             _liquidatedAmount = _amountNeeded;
         }
+    }
+
+    function tendTrigger(uint256 gasCost) public view override returns (bool) {
+        if (harvestTrigger(gasCost)) {
+            //harvest takes priority
+            return false;
+        }
+        // pull the liquidation liquidationThreshold from aave to be extra safu
+        (, , uint256 liquidationThreshold, , , , , , , ) =
+            protocolDataProvider.getReserveConfigurationData(address(want));
+
+        // convert bps to wad
+        liquidationThreshold = liquidationThreshold.mul(1e14);
+
+        uint256 currentCollatRatio = getCurrentCollatRatio();
+
+        if (currentCollatRatio >= liquidationThreshold) {
+            return true;
+        }
+
+        return (liquidationThreshold.sub(currentCollatRatio) <=
+            LIQUIDATION_WARNING_THRESHOLD);
     }
 
     function liquidateAllPositions()
@@ -439,7 +488,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     function _freeFunds(uint256 amountToFree) internal returns (uint256) {
         if (amountToFree == 0) return 0;
 
-        (uint256 deposits, uint256 borrows, ) = getCurrentPosition();
+        (uint256 deposits, uint256 borrows) = getCurrentPosition();
 
         // NOTE: we cannot
         uint256 realAssets = deposits.sub(borrows);
@@ -454,7 +503,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     }
 
     function _leverMax() internal {
-        (uint256 deposits, uint256 borrows, ) = getCurrentPosition();
+        (uint256 deposits, uint256 borrows) = getCurrentPosition();
 
         // NOTE: decimals should cancel out
         uint256 realSupply = deposits.sub(borrows);
@@ -497,7 +546,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         uint256 wantBalance = balanceOfWant();
 
         // calculate how much borrow can I take
-        (uint256 deposits, uint256 borrows, ) = getCurrentPosition();
+        (uint256 deposits, uint256 borrows) = getCurrentPosition();
         uint256 canBorrow =
             getBorrowFromDeposit(
                 deposits.add(wantBalance),
@@ -541,7 +590,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         }
 
         for (
-            uint8 i = 15;
+            uint8 i = 0;
             i < maxIterations && totalRepayAmount > minWant;
             i++
         ) {
@@ -557,20 +606,20 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         }
 
         // deposit back to get targetCollatRatio (we always need to leave this in this ratio)
-        (uint256 deposits, uint256 borrows, ) = getCurrentPosition();
+        (uint256 deposits, uint256 borrows) = getCurrentPosition();
         uint256 targetDeposit =
             getDepositFromBorrow(borrows, targetCollatRatio);
         if (targetDeposit > deposits) {
             uint256 toDeposit = targetDeposit.sub(deposits);
             if (toDeposit > minWant) {
-                _depositCollateral(toDeposit);
+                _depositCollateral(Math.min(toDeposit, balanceOfWant()));
             }
         }
     }
 
     function _leverDownFlashLoan(uint256 amount) internal returns (uint256) {
         if (amount <= minWant) return 0;
-        (uint256 deposits, uint256 borrows, ) = getCurrentPosition();
+        (, uint256 borrows) = getCurrentPosition();
         if (amount > borrows) {
             amount = borrows;
         }
@@ -578,7 +627,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     }
 
     function _withdrawExcessCollateral() internal returns (uint256 amount) {
-        (uint256 deposits, uint256 borrows, ) = getCurrentPosition();
+        (uint256 deposits, uint256 borrows) = getCurrentPosition();
         uint256 theoDeposits = getDepositFromBorrow(borrows, maxCollatRatio);
         if (deposits > theoDeposits) {
             uint256 toWithdraw = deposits.sub(theoDeposits);
@@ -588,50 +637,30 @@ contract Strategy is BaseStrategyInitializable, ICallee {
 
     function _depositCollateral(uint256 amount) internal returns (uint256) {
         if (amount == 0) return 0;
-        ILendingPool lp = _lendingPool();
-        _checkAllowance(address(lp), address(want), amount);
-        lp.deposit(address(want), amount, address(this), referral);
+        lendingPool.deposit(address(want), amount, address(this), referral);
         return amount;
     }
 
     function _withdrawCollateral(uint256 amount) internal returns (uint256) {
         if (amount == 0) return 0;
-        ILendingPool lp = _lendingPool();
-        _checkAllowance(address(lp), address(aToken), amount);
-        lp.withdraw(address(want), amount, address(this));
+        lendingPool.withdraw(address(want), amount, address(this));
         return amount;
     }
 
     function _repayWant(uint256 amount) internal returns (uint256) {
         if (amount == 0) return 0;
-        ILendingPool lp = _lendingPool();
-        _checkAllowance(address(lp), address(want), amount);
-        return lp.repay(address(want), amount, 2, address(this));
+        return lendingPool.repay(address(want), amount, 2, address(this));
     }
 
     function _borrowWant(uint256 amount) internal returns (uint256) {
         if (amount == 0) return 0;
-        _lendingPool().borrow(
-            address(want),
-            amount,
-            2,
-            referral,
-            address(this)
-        );
+        lendingPool.borrow(address(want), amount, 2, referral, address(this));
         return amount;
     }
 
     // INTERNAL VIEWS
     function balanceOfWant() internal view returns (uint256) {
         return want.balanceOf(address(this));
-    }
-
-    function balanceOfAToken() internal view returns (uint256) {
-        return aToken.balanceOf(address(this));
-    }
-
-    function balanceOfDebtToken() internal view returns (uint256) {
-        return debtToken.balanceOf(address(this));
     }
 
     function balanceOfAave() internal view returns (uint256) {
@@ -670,14 +699,19 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     function getCurrentPosition()
         public
         view
-        returns (
-            uint256 deposits,
-            uint256 borrows,
-            uint256 currentCollatRatio
-        )
+        returns (uint256 deposits, uint256 borrows)
     {
-        deposits = balanceOfAToken();
-        borrows = balanceOfDebtToken();
+        deposits = aToken.balanceOf(address(this));
+        borrows = debtToken.balanceOf(address(this));
+    }
+
+    function getCurrentCollatRatio()
+        public
+        view
+        returns (uint256 currentCollatRatio)
+    {
+        (uint256 deposits, uint256 borrows) = getCurrentPosition();
+
         if (deposits > 0) {
             currentCollatRatio = borrows.mul(COLLATERAL_RATIO_PRECISION).div(
                 deposits
@@ -717,13 +751,6 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         return amounts[amounts.length - 1];
     }
 
-    function _lendingPool() internal view returns (ILendingPool) {
-        return
-            ILendingPool(
-                protocolDataProvider.ADDRESSES_PROVIDER().getLendingPool()
-            );
-    }
-
     // returns cooldown status
     // 0 = no cooldown or past withdraw period
     // 1 = claim period
@@ -750,17 +777,6 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         }
     }
 
-    function _checkAllowance(
-        address _contract,
-        address _token,
-        uint256 _amount
-    ) internal {
-        if (IERC20(_token).allowance(address(this), _contract) < _amount) {
-            IERC20(_token).safeApprove(_contract, 0);
-            IERC20(_token).safeApprove(_contract, type(uint256).max);
-        }
-    }
-
     function getTokenOutPath(address _token_in, address _token_out)
         internal
         pure
@@ -784,7 +800,6 @@ contract Strategy is BaseStrategyInitializable, ICallee {
             return;
         }
         if (!useUniV3) {
-            _checkAllowance(address(V2ROUTER), address(aave), amountIn);
             V2ROUTER.swapExactTokensForTokens(
                 amountIn,
                 minOut,
@@ -793,7 +808,6 @@ contract Strategy is BaseStrategyInitializable, ICallee {
                 now
             );
         } else {
-            _checkAllowance(address(V3ROUTER), address(aave), amountIn);
             bytes memory path =
                 abi.encodePacked(
                     address(aave),

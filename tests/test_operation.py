@@ -31,6 +31,7 @@ def test_operation(
     )
 
 
+@pytest.mark.skip()
 def test_big_operation(
     chain,
     accounts,
@@ -56,11 +57,12 @@ def test_big_operation(
 
     utils.strategy_status(vault, strategy)
 
-    # tend()
-    strategy.tend({"from": strategist})
-
     utils.sleep(3 * 24 * 3600)
     strategy.harvest({"from": strategist})
+
+    utils.strategy_status(vault, strategy)
+
+    utils.sleep(6 * 3600)
 
     # withdrawal
     vault.withdraw({"from": user})
@@ -192,10 +194,12 @@ def test_larger_deleverage(
     )
 
     vault.updateStrategyDebtRatio(strategy.address, 1_000, {"from": gov})
-    utils.sleep(1)
-    strategy.harvest({"from": strategist})
-
-    utils.strategy_status(vault, strategy)
+    n = 0
+    while vault.debtOutstanding(strategy) > 0 and n < 5:
+        utils.sleep(1)
+        strategy.harvest({"from": strategist})
+        utils.strategy_status(vault, strategy)
+        n += 1
 
     tenth = int(big_amount / 10)
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == tenth
@@ -232,3 +236,35 @@ def test_triggers(chain, gov, vault, strategy, token, amount, user, strategist):
 
     strategy.harvestTrigger(0)
     strategy.tendTrigger(0)
+
+
+def test_tend(chain, gov, vault, strategy, token, amount, user, RELATIVE_APPROX):
+    # Deposit to the vault and harvest
+    actions.user_deposit(user, vault, token, amount)
+    chain.sleep(1)
+    strategy.harvest()
+
+    liquidationThreshold = (
+        Contract("0x057835Ad21a177dbdd3090bB1CAE03EaCF78Fc6d") # ProtocolDataProvider
+        .getReserveConfigurationData(token)
+        .dict()["liquidationThreshold"]
+    )
+
+    (deposits, borrows) = strategy.getCurrentPosition()
+    theoDeposits = borrows * 1e4 / (liquidationThreshold - 90)
+    toLose = int(deposits - theoDeposits)
+
+    utils.strategy_status(vault, strategy)
+    actions.generate_loss(strategy, toLose)
+    utils.strategy_status(vault, strategy)
+
+    strategy.setDebtThreshold(toLose * 1.1) # prevent harvestTrigger
+
+    assert strategy.tendTrigger(0)
+
+    strategy.tend()
+
+    utils.strategy_status(vault, strategy)
+
+    assert not strategy.tendTrigger(0)
+    assert pytest.approx(strategy.getCurrentCollatRatio(), rel=RELATIVE_APPROX) == strategy.targetCollatRatio()

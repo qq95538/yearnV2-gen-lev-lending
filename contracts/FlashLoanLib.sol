@@ -51,8 +51,6 @@ library FlashLoanLib {
         // calculate amount of ETH we need
         uint256 requiredETH;
         {
-            // requiredETH = desiredTokenInETH / collatRatioETH
-            // desiredTokenInETH = (desiredToken / priceETHBTC)
             requiredETH = _toETH(amount, token).mul(COLLAT_RATIO_PRECISION).div(
                 collatRatioETH
             );

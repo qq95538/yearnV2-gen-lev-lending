@@ -1,5 +1,5 @@
 import pytest
-from brownie import chain
+from brownie import accounts, chain, interface, Contract
 import utils
 
 # This file is reserved for standard actions like deposits
@@ -10,15 +10,25 @@ def user_deposit(user, vault, token, amount):
     assert token.balanceOf(vault.address) == amount
 
 
-# TODO: add args as required
-def generate_profit(amount):
-    # TODO: add action for simulating profit
+def generate_profit(strategy, token_whale, amount):
+    lp = interface.ILendingPool(
+        interface.ILendingPoolAddressesProvider(
+            interface.IProtocolDataProvider(
+                "0x057835Ad21a177dbdd3090bB1CAE03EaCF78Fc6d"
+            ).ADDRESSES_PROVIDER()
+        ).getLendingPool()
+    )
+    token = Contract(strategy.want())
+    token.approve(lp, 2 ** 256 - 1, {"from": token_whale})
+    lp.deposit(strategy.want(), amount, strategy, 0, {"from": token_whale})
     return
 
 
-# TODO: add args as required
-def generate_loss(amount):
-    # TODO: add action for simulating profit
+def generate_loss(strategy, amount):
+    strategy_account = accounts.at(strategy, force=True)
+    interface.IERC20(strategy.aToken()).transfer(
+        strategy.aToken(), amount, {"from": strategy_account}
+    )
     return
 
 

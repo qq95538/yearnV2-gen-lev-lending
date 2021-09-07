@@ -1,8 +1,9 @@
 from utils import actions
 import brownie
 from brownie import Contract
+import pytest
 
-
+@pytest.mark.skip()
 def test_healthcheck(user, vault, token, amount, strategy, chain, strategist, gov):
     # Deposit to the vault
     actions.user_deposit(user, vault, token, amount)

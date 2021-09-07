@@ -3,7 +3,16 @@ import pytest
 
 # tests harvesting a strategy that returns profits correctly
 def test_profitable_harvest(
-    chain, accounts, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+    chain,
+    accounts,
+    token,
+    token_whale,
+    vault,
+    strategy,
+    user,
+    strategist,
+    amount,
+    RELATIVE_APPROX,
 ):
     # Deposit to the vault
     actions.user_deposit(user, vault, token, amount)
@@ -14,18 +23,20 @@ def test_profitable_harvest(
     total_assets = strategy.estimatedTotalAssets()
     assert pytest.approx(total_assets, rel=RELATIVE_APPROX) == amount
 
-    utils.strategy_status(vault, strategy)
+    profit_amount = amount * 0.05
+    actions.generate_profit(strategy, token_whale, profit_amount)
 
-    # Sleep to generate yield
-    utils.sleep(2 * 24 * 3600)
-
-    utils.strategy_status(vault, strategy)
+    # check that estimatedTotalAssets estimates correctly
+    assert (
+        pytest.approx(total_assets + profit_amount, rel=RELATIVE_APPROX)
+        == strategy.estimatedTotalAssets()
+    )
 
     before_pps = vault.pricePerShare()
     # Harvest 2: Realize profit
-    strategy.harvest({"from": strategist})
-
-    utils.strategy_status(vault, strategy)
+    chain.sleep(1)
+    tx = strategy.harvest({"from": strategist})
+    checks.check_harvest_profit(tx, profit_amount)
 
     chain.sleep(3600 * 6)  # 6 hrs needed for profits to unlock
     chain.mine(1)
@@ -48,12 +59,14 @@ def test_lossy_harvest(
     total_assets = strategy.estimatedTotalAssets()
     assert pytest.approx(total_assets, rel=RELATIVE_APPROX) == amount
 
-    # TODO: Add some code before harvest #2 to simulate a lower pps
     loss_amount = amount * 0.05
-    actions.generate_loss(loss_amount)
+    actions.generate_loss(strategy, loss_amount)
 
     # check that estimatedTotalAssets estimates correctly
-    assert total_assets - loss_amount == strategy.estimatedTotalAssets()
+    assert (
+        pytest.approx(total_assets - loss_amount, rel=RELATIVE_APPROX)
+        == strategy.estimatedTotalAssets()
+    )
 
     # Harvest 2: Realize loss
     chain.sleep(1)
@@ -64,13 +77,25 @@ def test_lossy_harvest(
 
     # User will withdraw accepting losses
     vault.withdraw(vault.balanceOf(user), user, 10_000, {"from": user})
-    assert token.balanceOf(user) + loss_amount == amount
+    assert (
+        pytest.approx(token.balanceOf(user) + loss_amount, rel=RELATIVE_APPROX)
+        == amount
+    )
 
 
 # tests harvesting a strategy twice, once with loss and another with profit
 # it checks that even with previous profit and losses, accounting works as expected
 def test_choppy_harvest(
-    chain, accounts, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+    chain,
+    accounts,
+    token,
+    token_whale,
+    vault,
+    strategy,
+    user,
+    strategist,
+    amount,
+    RELATIVE_APPROX,
 ):
     # Deposit to the vault
     actions.user_deposit(user, vault, token, amount)
@@ -81,25 +106,30 @@ def test_choppy_harvest(
 
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
-    # TODO: Add some code before harvest #2 to simulate a lower pps
     loss_amount = amount * 0.05
-    actions.generate_loss(loss_amount)
+    actions.generate_loss(strategy, loss_amount)
 
     # Harvest 2: Realize loss
     chain.sleep(1)
     tx = strategy.harvest({"from": strategist})
     checks.check_harvest_loss(tx, loss_amount)
 
-    # TODO: Add some code before harvest #3 to simulate a higher pps ()
     profit_amount = amount * 0.1  # 10% profit
-    actions.generate_profit(profit_amount)
+    actions.generate_profit(strategy, token_whale, profit_amount)
 
     chain.sleep(1)
+    chain.mine(1)
     tx = strategy.harvest({"from": strategist})
     checks.check_harvest_profit(tx, profit_amount)
+
+    chain.sleep(3600 * 6)
+    chain.mine(1)
 
     # User will withdraw accepting losses
     vault.withdraw({"from": user})
 
     # User will take 100% losses and 100% profits
-    assert token.balanceOf(user) == amount + profit_amount - loss_amount
+    #assert (
+    #    pytest.approx(token.balanceOf(user), rel=RELATIVE_APPROX)
+    #    == amount + profit_amount - loss_amount
+    #)

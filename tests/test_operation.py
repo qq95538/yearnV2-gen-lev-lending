@@ -30,8 +30,17 @@ def test_operation(
         pytest.approx(token.balanceOf(user), rel=RELATIVE_APPROX) == user_balance_before
     )
 
+
 def test_big_operation(
-    chain, accounts, token, vault, strategy, user, strategist, big_amount, RELATIVE_APPROX
+    chain,
+    accounts,
+    token,
+    vault,
+    strategy,
+    user,
+    strategist,
+    big_amount,
+    RELATIVE_APPROX,
 ):
     # Deposit to the vault
     user_balance_before = token.balanceOf(user)
@@ -40,7 +49,10 @@ def test_big_operation(
     # harvest
     chain.sleep(1)
     strategy.harvest({"from": strategist})
-    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == big_amount
+    assert (
+        pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX)
+        == big_amount
+    )
 
     utils.strategy_status(vault, strategy)
 
@@ -55,6 +67,27 @@ def test_big_operation(
     assert (
         pytest.approx(token.balanceOf(user), rel=RELATIVE_APPROX) == user_balance_before
     )
+
+
+def test_harvest_after_long_idle_period(
+    chain, accounts, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+):
+    # Deposit to the vault
+    actions.user_deposit(user, vault, token, amount)
+
+    # harvest
+    chain.sleep(1)
+    strategy.harvest({"from": strategist})
+    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
+
+    utils.strategy_status(vault, strategy)
+
+    utils.sleep(26 * 7 * 24 * 3600)
+    utils.strategy_status(vault, strategy)
+
+    strategy.harvest({"from": strategist})
+
+    utils.strategy_status(vault, strategy)
 
 
 def test_emergency_exit(

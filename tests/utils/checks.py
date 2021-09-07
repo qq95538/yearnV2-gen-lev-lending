@@ -21,8 +21,10 @@ def check_revoked_strategy(vault, strategy):
     return
 
 
-def check_harvest_profit(tx, profit_amount):
-    assert tx.events["Harvested"]["profit"] == profit_amount
+def check_harvest_profit(tx, profit_amount, rel_approx=1e-5):
+    assert (
+        pytest.approx(tx.events["Harvested"]["profit"], rel=rel_approx) == profit_amount
+    )
 
 
 def check_harvest_profitable(tx):
@@ -30,8 +32,8 @@ def check_harvest_profitable(tx):
     assert tx.events["Harvested"]["loss"] == 0
 
 
-def check_harvest_loss(tx, loss_amount):
-    assert tx.events["Harvested"]["loss"] == loss_amount
+def check_harvest_loss(tx, loss_amount, rel_approx=1e-5):
+    assert pytest.approx(tx.events["Harvested"]["loss"], rel=rel_approx) == loss_amount
 
 
 def check_accounting(vault, strategy, totalGain, totalLoss, totalDebt):

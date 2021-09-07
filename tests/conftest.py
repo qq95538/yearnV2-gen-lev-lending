@@ -181,11 +181,12 @@ def strategy(chain, strategist, keeper, vault, Strategy, gov, weth):
 
 
 @pytest.fixture
-def cloned_strategy(Strategy, vault, strategy, strategist, gov):
-    # TODO: customize clone method and arguments
-    # TODO: use correct contract name (i.e. replace Strategy)
+def cloned_strategy(Strategy, vault, strategy, strategist, rewards, keeper, gov):
     cloned_strategy = strategy.cloneStrategy(
-        strategist, {"from": strategist}
+        vault,
+        strategist,
+        rewards,
+        keeper, {"from": strategist}
     ).return_value
     cloned_strategy = Strategy.at(cloned_strategy)
     vault.revokeStrategy(strategy)

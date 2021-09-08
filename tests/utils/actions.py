@@ -1,6 +1,5 @@
 import pytest
 from brownie import accounts, chain, interface, Contract
-import utils
 
 # This file is reserved for standard actions like deposits
 def user_deposit(user, vault, token, amount):

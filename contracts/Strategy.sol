@@ -483,7 +483,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         }
 
         // Always keep 1 wei to get around cooldown clear
-        if (stkAaveBalance >= minRewardToSell.add(1)) {
+        if (sellStkAave && stkAaveBalance >= minRewardToSell.add(1)) {
             uint256 minAAVEOut =
                 stkAaveBalance.mul(MAX_BPS.sub(maxStkAavePriceImpactBps)).div(
                     MAX_BPS

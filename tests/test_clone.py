@@ -1,5 +1,5 @@
-from utils import actions
-
+import pytest
+from utils import actions, utils
 
 def test_clone(
     vault,
@@ -13,10 +13,13 @@ def test_clone(
     user,
     RELATIVE_APPROX,
 ):
-    # send strategy to steady state
-    actions.first_deposit_and_harvest(
-        vault, strategy, token, user, gov, amount, RELATIVE_APPROX
-    )
+    user_balance_before = token.balanceOf(user)
+    actions.user_deposit(user, vault, token, amount)
+
+    # harvest
+    utils.sleep(1)
+    strategy.harvest({"from": strategist})
+    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
     cloned_strategy = strategy.clone(
         vault, strategist, rewards, keeper, {"from": strategist}

@@ -47,10 +47,11 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     ILendingPool private constant lendingPool =
         ILendingPool(0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9);
 
-    // Aave token addresses
+    // Token addresses
     address private constant aave = 0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9;
     IStakedAave private constant stkAave =
         IStakedAave(0x4da27a545c0c5B758a6BA100e3a049001de870f5);
+    address private constant weth = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
 
     // Supply and borrow tokens
     IAToken public aToken;
@@ -61,8 +62,6 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         IUni(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
     ISwapRouter private constant V3ROUTER =
         ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564);
-
-    address private constant weth = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
 
     // OPS State Variables
     uint256 private constant DEFAULT_COLLAT_TARGET_MARGIN = 0.02 ether;
@@ -135,36 +134,27 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         // Let collateral targets
         (, uint256 ltv, uint256 liquidationThreshold, , , , , , , ) =
             protocolDataProvider.getReserveConfigurationData(address(want));
-        liquidationThreshold = liquidationThreshold.mul(10**14); // convert bps to wad
+        liquidationThreshold = liquidationThreshold.mul(1e14); // convert bps to wad
         targetCollatRatio = liquidationThreshold.sub(
             DEFAULT_COLLAT_TARGET_MARGIN
         );
         maxCollatRatio = liquidationThreshold.sub(DEFAULT_COLLAT_MAX_MARGIN);
-        maxBorrowCollatRatio = ltv.mul(10**14).sub(DEFAULT_COLLAT_MAX_MARGIN);
+        maxBorrowCollatRatio = ltv.mul(1e14).sub(DEFAULT_COLLAT_MAX_MARGIN);
 
         DECIMALS = 10**vault.decimals();
 
         // approve spend aave spend
-        want.safeApprove(address(lendingPool), type(uint256).max);
-        IERC20(address(aToken)).safeApprove(
-            address(lendingPool),
-            type(uint256).max
-        );
+        approveMaxSpend(address(want), address(lendingPool));
+        approveMaxSpend(address(aToken), address(lendingPool));
 
         // approve flashloan spend
-        IERC20(address(weth)).safeApprove(
-            address(lendingPool),
-            type(uint256).max
-        );
-        IERC20(address(weth)).safeApprove(FlashLoanLib.SOLO, type(uint256).max);
+        approveMaxSpend(weth, address(lendingPool));
+        approveMaxSpend(address(aToken), FlashLoanLib.SOLO);
 
         // approve swap router spend
-        IERC20(address(stkAave)).safeApprove(
-            address(V3ROUTER),
-            type(uint256).max
-        );
-        IERC20(address(aave)).safeApprove(address(V2ROUTER), type(uint256).max);
-        IERC20(address(aave)).safeApprove(address(V3ROUTER), type(uint256).max);
+        approveMaxSpend(address(stkAave), address(V3ROUTER));
+        approveMaxSpend(aave, address(V2ROUTER));
+        approveMaxSpend(aave, address(V3ROUTER));
     }
 
     // SETTERS
@@ -908,5 +898,9 @@ contract Strategy is BaseStrategyInitializable, ICallee {
             supply.mul(collatRatio).div(
                 COLLATERAL_RATIO_PRECISION.sub(collatRatio)
             );
+    }
+
+    function approveMaxSpend(address token, address spender) internal {
+        IERC20(token).safeApprove(spender, type(uint256).max);
     }
 }

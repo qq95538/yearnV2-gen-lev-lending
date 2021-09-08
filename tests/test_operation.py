@@ -177,6 +177,7 @@ def test_large_deleverage(
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == tenth
 
 
+@pytest.mark.skip()
 def test_larger_deleverage(
     chain, gov, token, vault, strategy, user, strategist, big_amount, RELATIVE_APPROX
 ):
@@ -245,7 +246,7 @@ def test_tend(chain, gov, vault, strategy, token, amount, user, RELATIVE_APPROX)
     strategy.harvest()
 
     liquidationThreshold = (
-        Contract("0x057835Ad21a177dbdd3090bB1CAE03EaCF78Fc6d") # ProtocolDataProvider
+        Contract("0x057835Ad21a177dbdd3090bB1CAE03EaCF78Fc6d")  # ProtocolDataProvider
         .getReserveConfigurationData(token)
         .dict()["liquidationThreshold"]
     )
@@ -258,7 +259,7 @@ def test_tend(chain, gov, vault, strategy, token, amount, user, RELATIVE_APPROX)
     actions.generate_loss(strategy, toLose)
     utils.strategy_status(vault, strategy)
 
-    strategy.setDebtThreshold(toLose * 1.1) # prevent harvestTrigger
+    strategy.setDebtThreshold(toLose * 1.1)  # prevent harvestTrigger
 
     assert strategy.tendTrigger(0)
 
@@ -267,4 +268,7 @@ def test_tend(chain, gov, vault, strategy, token, amount, user, RELATIVE_APPROX)
     utils.strategy_status(vault, strategy)
 
     assert not strategy.tendTrigger(0)
-    assert pytest.approx(strategy.getCurrentCollatRatio(), rel=RELATIVE_APPROX) == strategy.targetCollatRatio()
+    assert (
+        pytest.approx(strategy.getCurrentCollatRatio(), rel=RELATIVE_APPROX)
+        == strategy.targetCollatRatio()
+    )

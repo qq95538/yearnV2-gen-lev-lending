@@ -149,7 +149,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
 
         // approve flashloan spend
         approveMaxSpend(weth, address(lendingPool));
-        approveMaxSpend(address(aToken), FlashLoanLib.SOLO);
+        approveMaxSpend(weth, FlashLoanLib.SOLO);
 
         // approve swap router spend
         approveMaxSpend(address(stkAave), address(V3ROUTER));

@@ -458,17 +458,18 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         uint256 stkAaveBalance = balanceOfStkAave();
         uint8 cooldownStatus = stkAaveBalance == 0 ? 0 : _checkCooldown(); // don't check status if we have no stkAave
 
+        // If it's the claim period claim
         if (stkAaveBalance > 0 && cooldownStatus == 1) {
             // redeem AAVE from stkAave
             stkAave.claimRewards(address(this), type(uint256).max);
             stkAave.redeem(address(this), stkAaveBalance);
         }
 
+        // claim stkAave from lending and borrowing, this will reset the cooldown
         address[] memory assets;
         assets = new address[](2);
         assets[0] = address(aToken);
         assets[1] = address(debtToken);
-
         incentivesController.claimRewards(
             assets,
             type(uint256).max,
@@ -477,7 +478,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
 
         stkAaveBalance = balanceOfStkAave();
 
-        // request start of cooldown period
+        // request start of cooldown period, if there's no cooldown in progress
         if (cooldownStkAave && stkAaveBalance > 0 && cooldownStatus == 0) {
             stkAave.cooldown();
         }

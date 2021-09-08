@@ -72,7 +72,6 @@ def test_lossy_harvest(
     chain.sleep(1)
     tx = strategy.harvest({"from": strategist})
     checks.check_harvest_loss(tx, loss_amount)
-    chain.sleep(3600 * 6)  # 6 hrs needed for profits to unlock
     chain.mine(1)
 
     # User will withdraw accepting losses

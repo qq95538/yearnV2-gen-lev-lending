@@ -8,7 +8,7 @@ pragma experimental ABIEncoderV2;
 // These are the core Yearn libraries
 import {
     BaseStrategyInitializable
-} from "@yearnvaults/contracts/BaseStrategy.sol";
+} from "@yearn/yearn-vaults/contracts/BaseStrategy.sol";
 
 import {
     SafeERC20,
@@ -440,8 +440,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     }
 
     function prepareMigration(address _newStrategy) internal override {
-        // TODO: Transfer any non-`want` tokens to the new strategy
-        // NOTE: `migrate` will automatically forward all `want` in this strategy to the new one
+        require(getCurrentSupply() < minWant);
     }
 
     function protectedTokens()
@@ -860,22 +859,22 @@ contract Strategy is BaseStrategyInitializable, ICallee {
                 now
             );
         } else {
-            ISwapRouter.ExactInputParams memory aaveToWantParams =
+            V3ROUTER.exactInput(
                 ISwapRouter.ExactInputParams(
                     getTokenOutPathV3(address(aave), address(want)),
                     address(this),
                     now,
                     amountIn,
                     minOut
-                );
-            V3ROUTER.exactInput(aaveToWantParams);
+                )
+            );
         }
     }
 
     function _sellSTKAAVEToAAVE(uint256 amountIn, uint256 minOut) internal {
         // Swap Rewards in UNIV3
         // NOTE: Unoptimized, can be frontrun and most importantly this pool is low liquidity
-        ISwapRouter.ExactInputSingleParams memory fromRewardToAAVEParams =
+        V3ROUTER.exactInputSingle(
             ISwapRouter.ExactInputSingleParams(
                 address(stkAave),
                 address(aave),
@@ -885,8 +884,8 @@ contract Strategy is BaseStrategyInitializable, ICallee {
                 amountIn, // wei
                 minOut,
                 0
-            );
-        V3ROUTER.exactInputSingle(fromRewardToAAVEParams);
+            )
+        );
     }
 
     function getBorrowFromDeposit(uint256 deposit, uint256 collatRatio)

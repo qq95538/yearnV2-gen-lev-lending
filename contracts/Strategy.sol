@@ -7,8 +7,7 @@ pragma experimental ABIEncoderV2;
 
 // These are the core Yearn libraries
 import {
-    BaseStrategyInitializable,
-    StrategyParams
+    BaseStrategyInitializable
 } from "@yearnvaults/contracts/BaseStrategy.sol";
 
 import {
@@ -28,7 +27,6 @@ import "../interfaces/aave/IAaveIncentivesController.sol";
 import "../interfaces/aave/IStakedAave.sol";
 import "../interfaces/aave/IAToken.sol";
 import "../interfaces/aave/IVariableDebtToken.sol";
-import "../interfaces/aave/IPriceOracle.sol";
 import "../interfaces/aave/ILendingPool.sol";
 
 import "./FlashLoanLib.sol";
@@ -84,8 +82,8 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     uint256 public maxStkAavePriceImpactBps = 500;
 
     uint24 public stkAaveToAaveSwapFee = 3000;
-    uint24 public stkAaveToWethSwapFee = 3000;
-    uint24 public stkWethToWantSwapFee = 3000;
+    uint24 public aaveToWethSwapFee = 3000;
+    uint24 public wethToWantSwapFee = 3000;
 
     uint16 private constant referral = 0; // Aave's referral code
     bool private alreadyAdjusted = false; // Signal whether a position adjust was done in prepareReturn
@@ -131,8 +129,8 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         maxStkAavePriceImpactBps = 500;
 
         stkAaveToAaveSwapFee = 3000;
-        stkAaveToWethSwapFee = 3000;
-        stkWethToWantSwapFee = 3000;
+        aaveToWethSwapFee = 3000;
+        wethToWantSwapFee = 3000;
 
         // Set aave tokens
         (address _aToken, , address _debtToken) =
@@ -186,6 +184,10 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         require(maxBorrowCollatRatio < ltv);
     }
 
+    function setIsDyDxActive(bool _isDyDxActive) external onlyVaultManagers {
+        isDyDxActive = _isDyDxActive;
+    }
+
     function setMinsAndMaxs(
         uint256 _minWant,
         uint256 _minRatio,
@@ -203,8 +205,8 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         uint256 _minRewardToSell,
         uint256 _maxStkAavePriceImpactBps,
         uint24 _stkAaveToAaveSwapFee,
-        uint24 _stkAaveToWethSwapFee,
-        uint24 _stkWethToWantSwapFee
+        uint24 _aaveToWethSwapFee,
+        uint24 _wethToWantSwapFee
     ) external onlyVaultManagers {
         sellStkAave = _sellStkAave;
         cooldownStkAave = _cooldownStkAave;
@@ -212,12 +214,8 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         minRewardToSell = _minRewardToSell;
         maxStkAavePriceImpactBps = _maxStkAavePriceImpactBps;
         stkAaveToAaveSwapFee = _stkAaveToAaveSwapFee;
-        stkAaveToWethSwapFee = _stkAaveToWethSwapFee;
-        stkWethToWantSwapFee = _stkWethToWantSwapFee;
-    }
-
-    function setIsDyDxActive(bool _isDyDxActive) external onlyVaultManagers {
-        isDyDxActive = _isDyDxActive;
+        aaveToWethSwapFee = _aaveToWethSwapFee;
+        wethToWantSwapFee = _wethToWantSwapFee;
     }
 
     function name() external view override returns (string memory) {
@@ -748,9 +746,9 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         }
     }
 
-    function getCurrentSupply() public view returns (uint256 supply) {
+    function getCurrentSupply() public view returns (uint256) {
         (uint256 deposits, uint256 borrows) = getCurrentPosition();
-        supply = deposits.sub(borrows);
+        return deposits.sub(borrows);
     }
 
     // conversions
@@ -835,14 +833,22 @@ contract Strategy is BaseStrategyInitializable, ICallee {
                 now
             );
         } else {
-            bytes memory path =
-                abi.encodePacked(
+            bytes memory path;
+            if (address(want) == weth) {
+                path = abi.encodePacked(
                     address(aave),
-                    uint24(3000),
+                    aaveToWethSwapFee,
+                    address(weth)
+                );
+            } else {
+                path = abi.encodePacked(
+                    address(aave),
+                    aaveToWethSwapFee,
                     address(weth),
-                    uint24(3000),
+                    wethToWantSwapFee,
                     address(want)
                 );
+            }
 
             ISwapRouter.ExactInputParams memory aaveToWantParams =
                 ISwapRouter.ExactInputParams(

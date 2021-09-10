@@ -111,8 +111,6 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     function _initializeThis() internal {
         require(address(aToken) == address(0));
 
-        //healthCheck = address(0xDDCea799fF1699e98EDF118e0629A974Df7DF012); // health.ychad.eth
-
         // initialize operational state
         maxIterations = 6;
         isDyDxActive = true;
@@ -516,7 +514,6 @@ contract Strategy is BaseStrategyInitializable, ICallee {
 
         (uint256 deposits, uint256 borrows) = getCurrentPosition();
 
-        // NOTE: we cannot
         uint256 realAssets = deposits.sub(borrows);
         uint256 amountRequired = Math.min(amountToFree, realAssets);
         uint256 newSupply = realAssets.sub(amountRequired);

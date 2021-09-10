@@ -21,6 +21,8 @@ def test_operation(
     # tend()
     strategy.tend({"from": strategist})
 
+    utils.strategy_status(vault, strategy)
+
     utils.sleep(3 * 24 * 3600)
     strategy.harvest({"from": strategist})
 
@@ -209,7 +211,7 @@ def test_large_deleverage(
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == tenth
 
 
-@pytest.mark.skip()
+# @pytest.mark.skip()
 def test_larger_deleverage(
     chain, gov, token, vault, strategy, user, strategist, big_amount, RELATIVE_APPROX
 ):

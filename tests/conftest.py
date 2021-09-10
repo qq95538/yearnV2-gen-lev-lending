@@ -67,12 +67,12 @@ token_addresses = {
 @pytest.fixture(
     params=[
         "WBTC",  # WBTC
-        "YFI",  # YFI
+        # "YFI",  # YFI
         # "WETH",  # WETH
         # 'LINK', # LINK
         # 'USDT', # USDT
         # 'DAI', # DAI
-        "USDC",  # USDC
+        # "USDC",  # USDC
     ],
     scope="session",
     autouse=True,
@@ -167,11 +167,13 @@ def live_vault(registry, token):
     yield registry.latestVault(token)
 
 
-@pytest.fixture
-def strategy(chain, strategist, keeper, vault, Strategy, gov, weth):
+@pytest.fixture(scope="function")
+def strategy(chain, strategist, keeper, vault, Strategy, gov, weth, dyDxActive):
     strategy = strategist.deploy(Strategy, vault)
     strategy.setKeeper(keeper)
     vault.addStrategy(strategy, 10_000, 0, 2 ** 256 - 1, 1_000, {"from": gov})
+
+    strategy.setIsDyDxActive(dyDxActive, {"from": gov})
 
     # send WETH to repay 2 wei+ each flashloan
     weth.transfer(strategy, 1e6, {"from": "0xBA12222222228d8Ba445958a75a0704d566BF2C8"})
@@ -180,27 +182,17 @@ def strategy(chain, strategist, keeper, vault, Strategy, gov, weth):
     yield strategy
 
 
-@pytest.fixture
-def cloned_strategy(Strategy, vault, strategy, strategist, rewards, keeper, gov):
-    cloned_strategy = strategy.clone(
-        vault, strategist, rewards, keeper, {"from": strategist}
-    ).return_value
-    cloned_strategy = Strategy.at(cloned_strategy)
-    vault.revokeStrategy(strategy)
-    vault.addStrategy(cloned_strategy, 10_000, 0, 2 ** 256 - 1, 1_000, {"from": gov})
-    yield
-
-
-# @pytest.fixture(autouse=True)
-def withdraw_no_losses(vault, token, amount, user):
-    yield
-    if vault.totalSupply() != 0:
-        return
-    vault.withdraw({"from": user})
-
-    # check that we dont have previously realised losses
-    # NOTE: this assumes deposit is `amount`
-    assert token.balanceOf(user) >= amount
+@pytest.fixture(
+    params=[
+        True,
+        # False,
+    ],
+    scope="session",
+    autouse=True,
+)
+def dyDxActive(request):
+    isActive = request.param
+    yield isActive
 
 
 @pytest.fixture(scope="session", autouse=True)

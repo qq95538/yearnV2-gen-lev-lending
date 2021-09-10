@@ -571,13 +571,13 @@ contract Strategy is BaseStrategyInitializable, ICallee {
 
         uint256 wantBalance = balanceOfWant();
 
-        // deposit available want as collateral
-        _depositCollateral(wantBalance);
-
         // calculate how much borrow can I take
         (uint256 deposits, uint256 borrows) = getCurrentPosition();
         uint256 canBorrow =
-            getBorrowFromDeposit(deposits, maxBorrowCollatRatio);
+            getBorrowFromDeposit(
+                deposits.add(wantBalance),
+                maxBorrowCollatRatio
+            );
 
         if (canBorrow <= borrows) {
             return 0;
@@ -587,6 +587,11 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         if (canBorrow < amount) {
             amount = canBorrow;
         }
+
+        // deposit available want as collateral
+        _depositCollateral(wantBalance);
+
+        // borrow available amount
         _borrowWant(amount);
 
         return amount;

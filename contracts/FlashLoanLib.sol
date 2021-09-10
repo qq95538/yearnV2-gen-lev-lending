@@ -72,7 +72,7 @@ library FlashLoanLib {
         operations[0] = _getWithdrawAction(0, requiredETH); // hardcoded market ID to 0 (ETH)
 
         // 2. Encode arguments of functions and create action for calling it
-        bytes memory data = abi.encode(deficit, amount, token);
+        bytes memory data = abi.encode(deficit, amount);
         // This call will:
         // supply ETH to Aave
         // borrow desired Token from Aave
@@ -102,7 +102,7 @@ library FlashLoanLib {
     ) public {
         uint256 wethBal = IERC20(weth).balanceOf(address(this));
         // NOTE: weth balance should always be > amount/0.75
-        require(wethBal >= amount, "!bal"); // to stop malicious calls
+        // require(wethBal >= amount, "!bal"); // to stop malicious calls
 
         ILendingPool lp = _lendingPool();
 

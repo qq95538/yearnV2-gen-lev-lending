@@ -83,10 +83,15 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     bool public useUniV3 = false; // only applied to aave => want, stkAave => aave always uses v3
     uint256 public maxStkAavePriceImpactBps = 500;
 
-    uint16 internal constant referral = 0; // Aave's referral code
-    bool private alreadyAdjusted; // Signal whether a position adjust was done in prepareReturn
+    uint24 public stkAaveToAaveSwapFee = 3000;
+    uint24 public stkAaveToWethSwapFee = 3000;
+    uint24 public stkWethToWantSwapFee = 3000;
+
+    uint16 private constant referral = 0; // Aave's referral code
+    bool private alreadyAdjusted = false; // Signal whether a position adjust was done in prepareReturn
 
     uint256 private constant MAX_BPS = 1e4;
+    uint256 private constant BPS_WAD_RATIO = 1e14;
     uint256 private constant COLLATERAL_RATIO_PRECISION = 1 ether;
     uint256 private constant PESSIMISM_FACTOR = 1000;
     uint256 private DECIMALS;
@@ -125,6 +130,10 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         useUniV3 = false;
         maxStkAavePriceImpactBps = 500;
 
+        stkAaveToAaveSwapFee = 3000;
+        stkAaveToWethSwapFee = 3000;
+        stkWethToWantSwapFee = 3000;
+
         // Set aave tokens
         (address _aToken, , address _debtToken) =
             protocolDataProvider.getReserveTokensAddresses(address(want));
@@ -134,12 +143,14 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         // Let collateral targets
         (, uint256 ltv, uint256 liquidationThreshold, , , , , , , ) =
             protocolDataProvider.getReserveConfigurationData(address(want));
-        liquidationThreshold = liquidationThreshold.mul(1e14); // convert bps to wad
+        liquidationThreshold = liquidationThreshold.mul(BPS_WAD_RATIO); // convert bps to wad
         targetCollatRatio = liquidationThreshold.sub(
             DEFAULT_COLLAT_TARGET_MARGIN
         );
         maxCollatRatio = liquidationThreshold.sub(DEFAULT_COLLAT_MAX_MARGIN);
-        maxBorrowCollatRatio = ltv.mul(1e14).sub(DEFAULT_COLLAT_MAX_MARGIN);
+        maxBorrowCollatRatio = ltv.mul(BPS_WAD_RATIO).sub(
+            DEFAULT_COLLAT_MAX_MARGIN
+        );
 
         DECIMALS = 10**vault.decimals();
 
@@ -175,17 +186,13 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         require(maxBorrowCollatRatio < ltv);
     }
 
-    function setMins(
+    function setMinsAndMaxs(
         uint256 _minWant,
         uint256 _minRatio,
-        uint256 _minRewardToSell
+        uint8 _maxIterations
     ) external onlyVaultManagers {
         minWant = _minWant;
         minRatio = _minRatio;
-        minRewardToSell = _minRewardToSell;
-    }
-
-    function setMaxIterations(uint8 _maxIterations) external onlyVaultManagers {
         maxIterations = _maxIterations;
     }
 
@@ -193,12 +200,20 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         bool _sellStkAave,
         bool _cooldownStkAave,
         bool _useUniV3,
-        uint256 _maxBorrowCollatRatio
+        uint256 _minRewardToSell,
+        uint256 _maxStkAavePriceImpactBps,
+        uint24 _stkAaveToAaveSwapFee,
+        uint24 _stkAaveToWethSwapFee,
+        uint24 _stkWethToWantSwapFee
     ) external onlyVaultManagers {
         sellStkAave = _sellStkAave;
         cooldownStkAave = _cooldownStkAave;
         useUniV3 = _useUniV3;
-        maxStkAavePriceImpactBps = _maxBorrowCollatRatio;
+        minRewardToSell = _minRewardToSell;
+        maxStkAavePriceImpactBps = _maxStkAavePriceImpactBps;
+        stkAaveToAaveSwapFee = _stkAaveToAaveSwapFee;
+        stkAaveToWethSwapFee = _stkAaveToWethSwapFee;
+        stkWethToWantSwapFee = _stkWethToWantSwapFee;
     }
 
     function setIsDyDxActive(bool _isDyDxActive) external onlyVaultManagers {
@@ -210,13 +225,12 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     }
 
     function estimatedTotalAssets() public view override returns (uint256) {
-        uint256 netAssets = getCurrentSupply();
         uint256 rewards =
             estimatedRewardsInWant().mul(MAX_BPS - PESSIMISM_FACTOR).div(
                 MAX_BPS
             );
 
-        return balanceOfWant().add(netAssets).add(rewards);
+        return balanceOfWant().add(getCurrentSupply()).add(rewards);
     }
 
     function estimatedRewardsInWant() public view returns (uint256) {
@@ -409,7 +423,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
             protocolDataProvider.getReserveConfigurationData(address(want));
 
         // convert bps to wad
-        liquidationThreshold = liquidationThreshold.mul(1e14);
+        liquidationThreshold = liquidationThreshold.mul(BPS_WAD_RATIO);
 
         uint256 currentCollatRatio = getCurrentCollatRatio();
 
@@ -559,13 +573,13 @@ contract Strategy is BaseStrategyInitializable, ICallee {
 
         uint256 wantBalance = balanceOfWant();
 
+        // deposit available want as collateral
+        _depositCollateral(wantBalance);
+
         // calculate how much borrow can I take
         (uint256 deposits, uint256 borrows) = getCurrentPosition();
         uint256 canBorrow =
-            getBorrowFromDeposit(
-                deposits.add(wantBalance),
-                maxBorrowCollatRatio
-            );
+            getBorrowFromDeposit(deposits, maxBorrowCollatRatio);
 
         if (canBorrow <= borrows) {
             return 0;
@@ -575,11 +589,6 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         if (canBorrow < amount) {
             amount = canBorrow;
         }
-
-        // deposit available want as collateral
-        _depositCollateral(wantBalance);
-
-        // borrow available collateral
         _borrowWant(amount);
 
         return amount;
@@ -709,13 +718,11 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         Account.Info memory account,
         bytes memory data
     ) public override {
-        (bool deficit, uint256 amount, address token) =
-            abi.decode(data, (bool, uint256, address));
+        (bool deficit, uint256 amount) = abi.decode(data, (bool, uint256));
         require(msg.sender == FlashLoanLib.SOLO);
         require(sender == address(this));
-        require(token == address(want));
 
-        FlashLoanLib.loanLogic(deficit, amount, token);
+        FlashLoanLib.loanLogic(deficit, amount, address(want));
     }
 
     function getCurrentPosition()
@@ -743,7 +750,6 @@ contract Strategy is BaseStrategyInitializable, ICallee {
 
     function getCurrentSupply() public view returns (uint256 supply) {
         (uint256 deposits, uint256 borrows) = getCurrentPosition();
-
         supply = deposits.sub(borrows);
     }
 
@@ -753,7 +759,9 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         view
         returns (uint256)
     {
-        if (amount == 0) return 0;
+        if (amount == 0 || address(want) == token) {
+            return amount;
+        }
 
         address[] memory path = getTokenOutPath(token, address(want));
         uint256[] memory amounts = IUni(V2ROUTER).getAmountsOut(amount, path);
@@ -767,16 +775,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         override
         returns (uint256)
     {
-        if (_amtInWei == 0 || address(want) == weth) {
-            return _amtInWei;
-        }
-
-        address[] memory path = getTokenOutPath(weth, address(want));
-
-        uint256[] memory amounts =
-            IUni(V2ROUTER).getAmountsOut(_amtInWei, path);
-
-        return amounts[amounts.length - 1];
+        return tokenToWant(weth, _amtInWei);
     }
 
     // returns cooldown status
@@ -839,13 +838,13 @@ contract Strategy is BaseStrategyInitializable, ICallee {
             bytes memory path =
                 abi.encodePacked(
                     address(aave),
-                    uint24(10000),
+                    uint24(3000),
                     address(weth),
-                    uint24(10000),
+                    uint24(3000),
                     address(want)
                 );
 
-            ISwapRouter.ExactInputParams memory fromAAVETowBTCParams =
+            ISwapRouter.ExactInputParams memory aaveToWantParams =
                 ISwapRouter.ExactInputParams(
                     path,
                     address(this),
@@ -853,7 +852,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
                     amountIn,
                     minOut
                 );
-            V3ROUTER.exactInput(fromAAVETowBTCParams);
+            V3ROUTER.exactInput(aaveToWantParams);
         }
     }
 
@@ -864,7 +863,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
             ISwapRouter.ExactInputSingleParams(
                 address(stkAave),
                 address(aave),
-                10000,
+                stkAaveToAaveSwapFee,
                 address(this),
                 now,
                 amountIn, // wei

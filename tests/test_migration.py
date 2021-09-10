@@ -1,6 +1,7 @@
 import pytest
 from utils import actions
 
+
 @pytest.mark.skip()
 def test_migration(
     chain,

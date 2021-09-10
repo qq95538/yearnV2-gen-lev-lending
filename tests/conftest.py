@@ -72,7 +72,7 @@ token_addresses = {
         # 'LINK', # LINK
         # 'USDT', # USDT
         # 'DAI', # DAI
-        'USDC', # USDC
+        "USDC",  # USDC
     ],
     scope="session",
     autouse=True,

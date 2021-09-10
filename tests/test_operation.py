@@ -70,8 +70,18 @@ def test_big_operation(
         pytest.approx(token.balanceOf(user), rel=RELATIVE_APPROX) == user_balance_before
     )
 
+
 def test_apr(
-    chain, accounts, gov, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+    chain,
+    accounts,
+    gov,
+    token,
+    vault,
+    strategy,
+    user,
+    strategist,
+    amount,
+    RELATIVE_APPROX,
 ):
     # Deposit to the vault
     actions.user_deposit(user, vault, token, amount)
@@ -83,7 +93,7 @@ def test_apr(
 
     utils.strategy_status(vault, strategy)
 
-    utils.sleep(7 *  24 * 3600)
+    utils.sleep(7 * 24 * 3600)
     utils.strategy_status(vault, strategy)
 
     vault.revokeStrategy(strategy.address, {"from": gov})

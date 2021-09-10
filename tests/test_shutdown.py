@@ -5,7 +5,9 @@ from utils import checks, actions, utils
 #       Make sure to demonstrate the "worst case losses" as well as the time it takes
 
 
-def test_shutdown(chain, token, token_whale, vault, strategy, amount, gov, user, RELATIVE_APPROX):
+def test_shutdown(
+    chain, token, token_whale, vault, strategy, amount, gov, user, RELATIVE_APPROX
+):
     # Deposit to the vault and harvest
     actions.user_deposit(user, vault, token, amount)
     chain.sleep(1)

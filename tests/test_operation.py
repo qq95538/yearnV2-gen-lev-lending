@@ -105,6 +105,47 @@ def test_apr(
     print(f"APR: {(token.balanceOf(vault)-amount)*52*100/amount:.2f}%")
 
 
+def test_apr_with_cooldown(
+    chain,
+    accounts,
+    gov,
+    token,
+    vault,
+    strategy,
+    user,
+    strategist,
+    amount,
+    RELATIVE_APPROX,
+):
+    # Deposit to the vault
+    actions.user_deposit(user, vault, token, amount)
+
+    # Don't sell stkAave, cool it down
+    strategy.setRewardBehavior(
+        False, True, True, 1e5, 0, 10000, 3000, 3000, {"from": gov}
+    )
+
+    # harvest
+    chain.sleep(1)
+    strategy.harvest({"from": strategist})
+    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
+
+    utils.strategy_status(vault, strategy)
+
+    utils.sleep(7 * 24 * 3600)
+    utils.strategy_status(vault, strategy)
+    vault.revokeStrategy(strategy.address, {"from": gov})
+    strategy.harvest({"from": strategist})
+
+    utils.sleep(int(10.1 * 24 * 3600))
+    utils.strategy_status(vault, strategy)
+
+    strategy.harvest({"from": strategist})
+
+    utils.strategy_status(vault, strategy)
+    print(f"APR: {(token.balanceOf(vault)-amount)*52*100/amount:.2f}%")
+
+
 def test_harvest_after_long_idle_period(
     chain, accounts, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
 ):

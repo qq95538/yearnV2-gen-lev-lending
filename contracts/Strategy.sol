@@ -79,9 +79,9 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     bool public sellStkAave = true;
     bool public cooldownStkAave = false;
     bool public useUniV3 = false; // only applied to aave => want, stkAave => aave always uses v3
-    uint256 public maxStkAavePriceImpactBps = 500;
+    uint256 public maxStkAavePriceImpactBps = 1000;
 
-    uint24 public stkAaveToAaveSwapFee = 3000;
+    uint24 public stkAaveToAaveSwapFee = 10000;
     uint24 public aaveToWethSwapFee = 3000;
     uint24 public wethToWantSwapFee = 3000;
 
@@ -126,9 +126,9 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         sellStkAave = true;
         cooldownStkAave = false;
         useUniV3 = false;
-        maxStkAavePriceImpactBps = 500;
+        maxStkAavePriceImpactBps = 1000;
 
-        stkAaveToAaveSwapFee = 3000;
+        stkAaveToAaveSwapFee = 10000;
         aaveToWethSwapFee = 3000;
         wethToWantSwapFee = 3000;
 

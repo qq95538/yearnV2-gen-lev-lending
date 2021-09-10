@@ -761,8 +761,11 @@ contract Strategy is BaseStrategyInitializable, ICallee {
             return amount;
         }
 
-        address[] memory path = getTokenOutPath(token, address(want));
-        uint256[] memory amounts = IUni(V2ROUTER).getAmountsOut(amount, path);
+        uint256[] memory amounts =
+            IUni(V2ROUTER).getAmountsOut(
+                amount,
+                getTokenOutPathV2(token, address(want))
+            );
 
         return amounts[amounts.length - 1];
     }
@@ -802,7 +805,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         }
     }
 
-    function getTokenOutPath(address _token_in, address _token_out)
+    function getTokenOutPathV2(address _token_in, address _token_out)
         internal
         pure
         returns (address[] memory _path)
@@ -820,6 +823,28 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         }
     }
 
+    function getTokenOutPathV3(address _token_in, address _token_out)
+        internal
+        view
+        returns (bytes memory _path)
+    {
+        if (address(want) == weth) {
+            _path = abi.encodePacked(
+                address(aave),
+                aaveToWethSwapFee,
+                address(weth)
+            );
+        } else {
+            _path = abi.encodePacked(
+                address(aave),
+                aaveToWethSwapFee,
+                address(weth),
+                wethToWantSwapFee,
+                address(want)
+            );
+        }
+    }
+
     function _sellAAVEForWant(uint256 amountIn, uint256 minOut) internal {
         if (amountIn == 0) {
             return;
@@ -828,31 +853,14 @@ contract Strategy is BaseStrategyInitializable, ICallee {
             V2ROUTER.swapExactTokensForTokens(
                 amountIn,
                 minOut,
-                getTokenOutPath(address(aave), address(want)),
+                getTokenOutPathV2(address(aave), address(want)),
                 address(this),
                 now
             );
         } else {
-            bytes memory path;
-            if (address(want) == weth) {
-                path = abi.encodePacked(
-                    address(aave),
-                    aaveToWethSwapFee,
-                    address(weth)
-                );
-            } else {
-                path = abi.encodePacked(
-                    address(aave),
-                    aaveToWethSwapFee,
-                    address(weth),
-                    wethToWantSwapFee,
-                    address(want)
-                );
-            }
-
             ISwapRouter.ExactInputParams memory aaveToWantParams =
                 ISwapRouter.ExactInputParams(
-                    path,
+                    getTokenOutPathV3(address(aave), address(want)),
                     address(this),
                     now,
                     amountIn,

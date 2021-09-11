@@ -33,6 +33,8 @@ library FlashLoanLib {
         IAToken(0x030bA81f1c18d280636F32af80b9AAd02Cf0854e);
     IProtocolDataProvider private constant protocolDataProvider =
         IProtocolDataProvider(0x057835Ad21a177dbdd3090bB1CAE03EaCF78Fc6d);
+    ILendingPool private constant lendingPool =
+        ILendingPool(0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9);
 
     // Aave's referral code
     uint16 private constant referral = 0;
@@ -104,7 +106,7 @@ library FlashLoanLib {
         // NOTE: weth balance should always be > amount/0.75
         // require(wethBal >= amount, "!bal"); // to stop malicious calls
 
-        ILendingPool lp = _lendingPool();
+        ILendingPool lp = lendingPool;
 
         // 1. Deposit WETH in Aave as collateral
         lp.deposit(weth, wethBal, address(this), referral);
@@ -198,13 +200,6 @@ library FlashLoanLib {
                 otherAccountId: 0,
                 data: ""
             });
-    }
-
-    function _lendingPool() internal view returns (ILendingPool) {
-        return
-            ILendingPool(
-                protocolDataProvider.ADDRESSES_PROVIDER().getLendingPool()
-            );
     }
 
     function _priceOracle() internal view returns (IPriceOracle) {

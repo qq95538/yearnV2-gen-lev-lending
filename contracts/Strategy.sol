@@ -192,7 +192,8 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         uint256 _minRatio,
         uint8 _maxIterations
     ) external onlyVaultManagers {
-        require(_maxIterations > 0);
+        require(_minRatio < maxBorrowCollatRatio);
+        require(_maxIterations > 0 && _maxIterations < 16);
         minWant = _minWant;
         minRatio = _minRatio;
         maxIterations = _maxIterations;
@@ -236,41 +237,18 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         uint256 aaveBalance = balanceOfAave();
         uint256 stkAaveBalance = balanceOfStkAave();
 
-        uint256 combinedBalance =
-            aaveBalance.add(
-                stkAaveBalance.mul(MAX_BPS.sub(maxStkAavePriceImpactBps)).div(
-                    MAX_BPS
-                )
+        uint256 pendingRewards =
+            incentivesController.getRewardsBalance(
+                getAaveAssets(),
+                address(this)
+            );
+        uint256 stkAaveDiscountFactor = MAX_BPS.sub(maxStkAavePriceImpactBps);
+        uint256 combinedStkAave =
+            pendingRewards.add(stkAaveBalance).mul(stkAaveDiscountFactor).div(
+                MAX_BPS
             );
 
-        uint256 lastReport = vault.strategies(address(this)).lastReport;
-        if (lastReport >= block.timestamp) {
-            return 0;
-        }
-        uint256 secondsSinceLastReport = block.timestamp.sub(lastReport);
-
-        (uint256 deposits, uint256 borrows) = getCurrentPosition();
-
-        if (deposits == 0) {
-            return tokenToWant(aave, combinedBalance);
-        }
-
-        uint256 supplyRewards =
-            _tokenRewards(address(aToken), deposits, secondsSinceLastReport);
-
-        // Shortcut if no borrows
-        if (borrows == 0) {
-            return tokenToWant(aave, supplyRewards.add(combinedBalance));
-        }
-
-        uint256 borrowRewards =
-            _tokenRewards(address(debtToken), borrows, secondsSinceLastReport);
-
-        return
-            tokenToWant(
-                aave,
-                supplyRewards.add(borrowRewards).add(combinedBalance)
-            );
+        return tokenToWant(aave, aaveBalance.add(combinedStkAave));
     }
 
     function prepareReturn(uint256 _debtOutstanding)
@@ -480,12 +458,8 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         }
 
         // claim stkAave from lending and borrowing, this will reset the cooldown
-        address[] memory assets;
-        assets = new address[](2);
-        assets[0] = address(aToken);
-        assets[1] = address(debtToken);
         incentivesController.claimRewards(
-            assets,
+            getAaveAssets(),
             type(uint256).max,
             address(this)
         );
@@ -706,16 +680,6 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         return IERC20(address(stkAave)).balanceOf(address(this));
     }
 
-    function _tokenRewards(
-        address _token,
-        uint256 _amount,
-        uint256 _seconds
-    ) private view returns (uint256) {
-        (, uint256 aavePerSecond, ) = incentivesController.getAssetData(_token);
-        uint256 share = _amount.mul(DECIMALS).div(IERC20(_token).totalSupply());
-        return share.mul(aavePerSecond).mul(_seconds).div(DECIMALS);
-    }
-
     // Flashloan callback function
     function callFunction(
         address sender,
@@ -891,6 +855,12 @@ contract Strategy is BaseStrategyInitializable, ICallee {
                 0
             )
         );
+    }
+
+    function getAaveAssets() internal view returns (address[] memory assets) {
+        assets = new address[](2);
+        assets[0] = address(aToken);
+        assets[1] = address(debtToken);
     }
 
     function getBorrowFromDeposit(uint256 deposit, uint256 collatRatio)

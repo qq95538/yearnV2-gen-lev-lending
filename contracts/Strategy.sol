@@ -225,12 +225,19 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     }
 
     function estimatedTotalAssets() public view override returns (uint256) {
+        uint256 balanceExcludingRewards =
+            balanceOfWant().add(getCurrentSupply());
+
+        // if we don't have a position, don't worry about rewards
+        if (balanceExcludingRewards < minWant) {
+            return balanceExcludingRewards;
+        }
+
         uint256 rewards =
             estimatedRewardsInWant().mul(MAX_BPS.sub(PESSIMISM_FACTOR)).div(
                 MAX_BPS
             );
-
-        return balanceOfWant().add(getCurrentSupply()).add(rewards);
+        return balanceExcludingRewards.add(rewards);
     }
 
     function estimatedRewardsInWant() public view returns (uint256) {

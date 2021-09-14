@@ -103,9 +103,6 @@ library FlashLoanLib {
         address want
     ) public {
         uint256 wethBal = IERC20(weth).balanceOf(address(this));
-        // NOTE: weth balance should always be > amount/0.75
-        // require(wethBal >= amount, "!bal"); // to stop malicious calls
-
         ILendingPool lp = lendingPool;
 
         // 1. Deposit WETH in Aave as collateral

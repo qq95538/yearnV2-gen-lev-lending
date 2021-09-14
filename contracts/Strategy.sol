@@ -172,14 +172,15 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     ) external onlyVaultManagers {
         (, uint256 ltv, uint256 liquidationThreshold, , , , , , , ) =
             protocolDataProvider.getReserveConfigurationData(address(want));
+
+        require(_targetCollatRatio < liquidationThreshold);
+        require(_maxCollatRatio < liquidationThreshold);
+        require(_targetCollatRatio < _maxCollatRatio);
+        require(_maxBorrowCollatRatio < ltv);
+
         targetCollatRatio = _maxCollatRatio;
         maxCollatRatio = _maxCollatRatio;
         maxBorrowCollatRatio = _maxBorrowCollatRatio;
-
-        require(targetCollatRatio < liquidationThreshold);
-        require(maxCollatRatio < liquidationThreshold);
-        require(targetCollatRatio < maxCollatRatio);
-        require(maxBorrowCollatRatio < ltv);
     }
 
     function setIsDyDxActive(bool _isDyDxActive) external onlyVaultManagers {
@@ -191,6 +192,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         uint256 _minRatio,
         uint8 _maxIterations
     ) external onlyVaultManagers {
+        require(_maxIterations > 0);
         minWant = _minWant;
         minRatio = _minRatio;
         maxIterations = _maxIterations;
@@ -206,6 +208,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         uint24 _aaveToWethSwapFee,
         uint24 _wethToWantSwapFee
     ) external onlyVaultManagers {
+        require(_maxStkAavePriceImpactBps <= MAX_BPS);
         sellStkAave = _sellStkAave;
         cooldownStkAave = _cooldownStkAave;
         useUniV3 = _useUniV3;
@@ -222,7 +225,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
 
     function estimatedTotalAssets() public view override returns (uint256) {
         uint256 rewards =
-            estimatedRewardsInWant().mul(MAX_BPS - PESSIMISM_FACTOR).div(
+            estimatedRewardsInWant().mul(MAX_BPS.sub(PESSIMISM_FACTOR)).div(
                 MAX_BPS
             );
 
@@ -235,7 +238,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
 
         uint256 combinedBalance =
             aaveBalance.add(
-                stkAaveBalance.mul(MAX_BPS - maxStkAavePriceImpactBps).div(
+                stkAaveBalance.mul(MAX_BPS.sub(maxStkAavePriceImpactBps)).div(
                     MAX_BPS
                 )
             );
@@ -307,7 +310,9 @@ contract Strategy is BaseStrategyInitializable, ICallee {
             // but it is possible for the strategy to unwind full position
             (amountAvailable, ) = liquidatePosition(amountRequired);
 
+            // Don't do a redundant adjustment in adjustPosition
             alreadyAdjusted = true;
+
             if (amountAvailable >= amountRequired) {
                 _debtPayment = _debtOutstanding;
                 // profit remains unchanged unless there is not enough to pay it
@@ -850,15 +855,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         if (amountIn == 0) {
             return;
         }
-        if (!useUniV3) {
-            V2ROUTER.swapExactTokensForTokens(
-                amountIn,
-                minOut,
-                getTokenOutPathV2(address(aave), address(want)),
-                address(this),
-                now
-            );
-        } else {
+        if (useUniV3) {
             V3ROUTER.exactInput(
                 ISwapRouter.ExactInputParams(
                     getTokenOutPathV3(address(aave), address(want)),
@@ -867,6 +864,14 @@ contract Strategy is BaseStrategyInitializable, ICallee {
                     amountIn,
                     minOut
                 )
+            );
+        } else {
+            V2ROUTER.swapExactTokensForTokens(
+                amountIn,
+                minOut,
+                getTokenOutPathV2(address(aave), address(want)),
+                address(this),
+                now
             );
         }
     }

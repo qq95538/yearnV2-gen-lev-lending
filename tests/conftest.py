@@ -71,7 +71,7 @@ token_addresses = {
         # "WETH",  # WETH
         # 'LINK', # LINK
         # 'USDT', # USDT
-        # 'DAI', # DAI
+        # "DAI", # DAI
         # "USDC",  # USDC
     ],
     scope="session",
@@ -154,6 +154,7 @@ def vault(pm, gov, rewards, guardian, management, token):
     vault.initialize(token, gov, rewards, "", "", guardian, management)
     vault.setDepositLimit(2 ** 256 - 1, {"from": gov})
     vault.setManagement(management, {"from": gov})
+    vault.setManagementFee(0, {"from": gov})
     yield vault
 
 
@@ -180,6 +181,13 @@ def strategy(chain, strategist, keeper, vault, Strategy, gov, weth, dyDxActive):
     chain.sleep(1)
     chain.mine()
     yield strategy
+
+
+@pytest.fixture()
+def enable_healthcheck(strategy, gov):
+    strategy.setHealthCheck("0xDDCea799fF1699e98EDF118e0629A974Df7DF012", {"from": gov})
+    strategy.setDoHealthCheck(True, {"from": gov})
+    yield True
 
 
 @pytest.fixture(

@@ -33,46 +33,6 @@ def test_operation(
     )
 
 
-@pytest.mark.skip()
-def test_big_operation(
-    chain,
-    accounts,
-    token,
-    vault,
-    strategy,
-    user,
-    strategist,
-    big_amount,
-    RELATIVE_APPROX,
-):
-    # Deposit to the vault
-    user_balance_before = token.balanceOf(user)
-    actions.user_deposit(user, vault, token, big_amount)
-
-    # harvest
-    chain.sleep(1)
-    strategy.harvest({"from": strategist})
-    assert (
-        pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX)
-        == big_amount
-    )
-
-    utils.strategy_status(vault, strategy)
-
-    utils.sleep(3 * 24 * 3600)
-    strategy.harvest({"from": strategist})
-
-    utils.strategy_status(vault, strategy)
-
-    utils.sleep(6 * 3600)
-
-    # withdrawal
-    vault.withdraw({"from": user})
-    assert (
-        pytest.approx(token.balanceOf(user), rel=RELATIVE_APPROX) == user_balance_before
-    )
-
-
 def test_apr(
     chain,
     accounts,
@@ -93,15 +53,10 @@ def test_apr(
     strategy.harvest({"from": strategist})
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
-    utils.strategy_status(vault, strategy)
-
     utils.sleep(7 * 24 * 3600)
-    utils.strategy_status(vault, strategy)
 
     vault.revokeStrategy(strategy.address, {"from": gov})
     strategy.harvest({"from": strategist})
-
-    utils.strategy_status(vault, strategy)
     print(f"APR: {(token.balanceOf(vault)-amount)*52*100/amount:.2f}%")
 
 
@@ -130,19 +85,13 @@ def test_apr_with_cooldown(
     strategy.harvest({"from": strategist})
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
-    utils.strategy_status(vault, strategy)
-
     utils.sleep(7 * 24 * 3600)
-    utils.strategy_status(vault, strategy)
     vault.revokeStrategy(strategy.address, {"from": gov})
     strategy.harvest({"from": strategist})
 
     utils.sleep(int(10.1 * 24 * 3600))
-    utils.strategy_status(vault, strategy)
 
     strategy.harvest({"from": strategist})
-
-    utils.strategy_status(vault, strategy)
     print(f"APR: {(token.balanceOf(vault)-amount)*52*100/amount:.2f}%")
 
 
@@ -252,7 +201,6 @@ def test_large_deleverage(
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == tenth
 
 
-# @pytest.mark.skip()
 def test_larger_deleverage(
     chain, gov, token, vault, strategy, user, strategist, big_amount, RELATIVE_APPROX
 ):

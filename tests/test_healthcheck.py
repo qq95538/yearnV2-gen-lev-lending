@@ -25,7 +25,7 @@ def test_healthcheck(
     actions.generate_loss(strategy, loss_amount)
 
     # Harvest should revert because the loss in unacceptable
-    # Crashes ganache
+    # The revert crashes ganache, so this check is commented out 
     # with brownie.reverts("!healthcheck"):
     #     strategy.harvest({"from": strategist})
 
@@ -35,6 +35,3 @@ def test_healthcheck(
     # the harvest should go through, taking the loss
     tx = strategy.harvest({"from": strategist})
     assert tx.events["Harvested"]["loss"] <= loss_amount
-
-    vault.withdraw({"from": user})
-    assert token.balanceOf(user) < amount  # user took losses

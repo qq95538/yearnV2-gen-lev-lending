@@ -451,6 +451,11 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         _withdrawCollateral(amount);
     }
 
+    // emergency function that we can use to sell rewards if something is broken
+    function manualClaimAndSellRewards() external onlyVaultManagers {
+        _claimAndSellRewards();
+    }
+
     // INTERNAL ACTIONS
 
     function _claimAndSellRewards() internal returns (uint256) {

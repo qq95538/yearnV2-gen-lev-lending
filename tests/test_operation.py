@@ -57,7 +57,9 @@ def test_apr(
 
     vault.revokeStrategy(strategy.address, {"from": gov})
     strategy.harvest({"from": strategist})
-    print(f"APR: {(token.balanceOf(vault)-amount)*52*100/amount:.2f}%")
+    print(
+        f"APR: {(token.balanceOf(vault)-amount)*52*100/amount:.2f}% on {amount/10**token.decimals():,.2f}"
+    )
 
 
 def test_apr_with_cooldown(
@@ -92,7 +94,9 @@ def test_apr_with_cooldown(
     utils.sleep(int(10.1 * 24 * 3600))
 
     strategy.harvest({"from": strategist})
-    print(f"APR: {(token.balanceOf(vault)-amount)*52*100/amount:.2f}%")
+    print(
+        f"APR: {(token.balanceOf(vault)-amount)*52*100/amount:.2f}% on {amount/10**token.decimals():,.2f}"
+    )
 
 
 def test_harvest_after_long_idle_period(

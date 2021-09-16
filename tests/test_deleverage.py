@@ -19,6 +19,8 @@ def test_large_deleverage_to_zero(
         == big_amount
     )
 
+    utils.sleep(7 * 24 * 3600)
+
     vault.revokeStrategy(strategy.address, {"from": gov})
     n = 0
     while vault.debtOutstanding(strategy) > 0 and n < 5:
@@ -66,17 +68,22 @@ def test_large_manual_deleverage_to_zero(
 
         strategy.manualDeleverage(step_size, {"from": gov})
 
+        n += 1
+
         if strategy.getCurrentPosition().dict()["borrows"] == 0:
             break
 
-        n += 1
-
     utils.strategy_status(vault, strategy)
-    print(f"manualDeleverage calls: {n + 1} iterations")
+    print(f"manualDeleverage calls: {n} iterations")
 
     utils.sleep(1)
-    strategy.manualReleaseWant(strategy.getCurrentPosition().dict()["deposits"], {"from": gov})
+    strategy.manualReleaseWant(
+        strategy.getCurrentPosition().dict()["deposits"], {"from": gov}
+    )
     assert strategy.getCurrentSupply() <= strategy.minWant()
+
+    if strategy.estimatedRewardsInWant() >= strategy.minRewardToSell():
+        strategy.manualClaimAndSellRewards()
 
     utils.sleep()
     utils.strategy_status(vault, strategy)

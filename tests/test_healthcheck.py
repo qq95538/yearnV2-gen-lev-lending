@@ -25,7 +25,7 @@ def test_healthcheck(
     actions.generate_loss(strategy, loss_amount)
 
     # Harvest should revert because the loss in unacceptable
-    # The revert crashes ganache, so this check is commented out 
+    # The revert crashes ganache, so this check is commented out
     # with brownie.reverts("!healthcheck"):
     #     strategy.harvest({"from": strategist})
 

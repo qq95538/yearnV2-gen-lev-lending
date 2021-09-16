@@ -43,6 +43,54 @@ def test_large_deleverage_to_zero(
     )
 
 
+def test_large_deleverage_parameter_change(
+    chain, gov, token, vault, strategy, user, strategist, big_amount, RELATIVE_APPROX
+):
+    # Deposit to the vault and harvest
+    actions.user_deposit(user, vault, token, big_amount)
+    utils.sleep(1)
+    strategy.harvest({"from": strategist})
+
+    utils.strategy_status(vault, strategy)
+
+    assert (
+        pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX)
+        == big_amount
+    )
+
+    utils.sleep(7 * 24 * 3600)
+
+    strategy.setCollateralTargets(
+        strategy.targetCollatRatio() / 2,
+        strategy.maxCollatRatio(),
+        strategy.maxBorrowCollatRatio(),
+        {"from": gov},
+    )
+
+    n = 0
+    while (
+        not pytest.approx(strategy.getCurrentCollatRatio(), rel=RELATIVE_APPROX)
+        == strategy.targetCollatRatio()
+    ):
+        utils.sleep(1)
+        strategy.harvest({"from": strategist})
+        utils.strategy_status(vault, strategy)
+        n += 1
+
+    assert (
+        pytest.approx(strategy.getCurrentCollatRatio(), rel=RELATIVE_APPROX)
+        == strategy.targetCollatRatio()
+    )
+    utils.sleep()
+    utils.strategy_status(vault, strategy)
+    assert (
+        pytest.approx(
+            vault.strategies(strategy).dict()["totalLoss"], rel=RELATIVE_APPROX
+        )
+        == 0
+    )
+
+
 def test_large_manual_deleverage_to_zero(
     chain, gov, token, vault, strategy, user, strategist, big_amount, RELATIVE_APPROX
 ):

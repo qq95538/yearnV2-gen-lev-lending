@@ -173,12 +173,16 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         (, uint256 ltv, uint256 liquidationThreshold, , , , , , , ) =
             protocolDataProvider.getReserveConfigurationData(address(want));
 
+        // convert bps to wad
+        ltv = ltv.mul(BPS_WAD_RATIO);
+        liquidationThreshold = liquidationThreshold.mul(BPS_WAD_RATIO);
+
         require(_targetCollatRatio < liquidationThreshold);
         require(_maxCollatRatio < liquidationThreshold);
         require(_targetCollatRatio < _maxCollatRatio);
         require(_maxBorrowCollatRatio < ltv);
 
-        targetCollatRatio = _maxCollatRatio;
+        targetCollatRatio = _targetCollatRatio;
         maxCollatRatio = _maxCollatRatio;
         maxBorrowCollatRatio = _maxBorrowCollatRatio;
     }

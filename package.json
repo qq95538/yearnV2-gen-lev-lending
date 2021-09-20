@@ -3,6 +3,8 @@
   "devDependencies": {
     "@commitlint/cli": "^11.0.0",
     "@commitlint/config-conventional": "^11.0.0",
+    "@yearn/yearn-vaults": "github:yearn/yearn-vaults#v0.4.3",
+    "@openzeppelin/openzeppelin": "github:OpenZeppelin/openzeppelin-contracts#v3.1.0",
     "ethlint": "^1.2.5",
     "hardhat": "^2.6.1",
     "husky": "^4.3.0",

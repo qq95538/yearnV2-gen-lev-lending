@@ -42,6 +42,7 @@ library FlashLoanLib {
     function doDyDxFlashLoan(
         bool deficit,
         uint256 amountDesired,
+        uint256 depositToCloseLTVGap,
         address token
     ) public returns (uint256 amount) {
         if (amountDesired == 0) {
@@ -57,13 +58,22 @@ library FlashLoanLib {
                 collatRatioETH
             );
 
+            uint256 requiredEthToCloseLTVGap = 0;
+            if (depositToCloseLTVGap > 0) {
+                requiredEthToCloseLTVGap = _toETH(depositToCloseLTVGap, token);
+                requiredETH = requiredETH.add(requiredEthToCloseLTVGap);
+            }
+
             uint256 dxdyLiquidity = IERC20(weth).balanceOf(address(solo));
             if (requiredETH > dxdyLiquidity) {
                 requiredETH = dxdyLiquidity;
                 // NOTE: if we cap amountETH, we reduce amountToken we are taking too
-                amount = _fromETH(requiredETH, token).mul(collatRatioETH).div(
-                    1 ether
-                );
+                amount = _fromETH(
+                    requiredETH.sub(requiredEthToCloseLTVGap),
+                    token
+                )
+                    .mul(collatRatioETH)
+                    .div(1 ether);
             }
         }
 
@@ -92,7 +102,7 @@ library FlashLoanLib {
 
         solo.operate(accountInfos, operations);
 
-        emit Leverage(amountDesired, requiredETH, deficit, address(solo));
+        emit Leverage(amount, requiredETH, deficit, address(solo));
 
         return amount; // we need to return the amount of Token we have changed our position in
     }

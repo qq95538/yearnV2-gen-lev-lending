@@ -1,5 +1,5 @@
 import brownie
-from brownie import Contract
+from brownie import Contract, test
 import pytest
 from utils import actions, checks, utils
 
@@ -136,17 +136,20 @@ def test_emergency_exit(
     assert strategy.estimatedTotalAssets() < amount
 
 
+@pytest.mark.parametrize('starting_debt_ratio', [100, 500, 1_000, 2_500, 5_000, 7_500, 9_500])
 def test_increase_debt_ratio(
-    chain, gov, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+    chain, gov, token, vault, strategy, user, strategist, amount, starting_debt_ratio, RELATIVE_APPROX
 ):
     # Deposit to the vault and harvest
     actions.user_deposit(user, vault, token, amount)
-    vault.updateStrategyDebtRatio(strategy.address, 5_000, {"from": gov})
+    vault.updateStrategyDebtRatio(strategy.address, starting_debt_ratio, {"from": gov})
     chain.sleep(1)
     strategy.harvest({"from": strategist})
-    half = int(amount / 2)
+    part_amount = int(amount * starting_debt_ratio / 10_000)
 
-    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == half
+    utils.strategy_status(vault, strategy)
+
+    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == part_amount
 
     vault.updateStrategyDebtRatio(strategy.address, 10_000, {"from": gov})
     chain.sleep(1)
@@ -157,8 +160,9 @@ def test_increase_debt_ratio(
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
 
+@pytest.mark.parametrize('ending_debt_ratio', [100, 500, 1_000, 2_500, 5_000, 7_500, 9_500])
 def test_decrease_debt_ratio(
-    chain, gov, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+    chain, gov, token, vault, strategy, user, strategist, amount, ending_debt_ratio, RELATIVE_APPROX
 ):
     # Deposit to the vault and harvest
     actions.user_deposit(user, vault, token, amount)
@@ -171,14 +175,14 @@ def test_decrease_debt_ratio(
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
     # Two harvests needed to unlock
-    vault.updateStrategyDebtRatio(strategy.address, 5_000, {"from": gov})
+    vault.updateStrategyDebtRatio(strategy.address, ending_debt_ratio, {"from": gov})
     utils.sleep(1)
     strategy.harvest({"from": strategist})
 
     utils.strategy_status(vault, strategy)
 
-    half = int(amount / 2)
-    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == half
+    part_amount = int(amount * ending_debt_ratio / 10_000)
+    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == part_amount
 
 
 def test_large_deleverage(

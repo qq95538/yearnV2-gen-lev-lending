@@ -552,7 +552,20 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     }
 
     function _leverUpFlashLoan(uint256 amount) internal returns (uint256) {
-        return FlashLoanLib.doDyDxFlashLoan(false, amount, address(want));
+        (uint256 deposits, uint256 borrows) = getCurrentPosition();
+        uint256 depositToMeetLtv =
+            getDepositFromBorrow(borrows, maxBorrowCollatRatio);
+        uint256 depositDeficitToMeetLtv = 0;
+        if (depositToMeetLtv > deposits) {
+            depositDeficitToMeetLtv = depositToMeetLtv.sub(deposits);
+        }
+        return
+            FlashLoanLib.doDyDxFlashLoan(
+                false,
+                amount,
+                depositDeficitToMeetLtv,
+                address(want)
+            );
     }
 
     function _leverUpStep(uint256 amount) internal returns (uint256) {
@@ -640,7 +653,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         if (amount > borrows) {
             amount = borrows;
         }
-        return FlashLoanLib.doDyDxFlashLoan(true, amount, address(want));
+        return FlashLoanLib.doDyDxFlashLoan(true, amount, 0, address(want));
     }
 
     function _withdrawExcessCollateral() internal returns (uint256 amount) {

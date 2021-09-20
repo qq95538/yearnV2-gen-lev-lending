@@ -8,42 +8,42 @@ def shared_setup(fn_isolation):
     pass
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def gov(accounts):
     yield accounts.at("0xFEB4acf3df3cDEA7399794D0869ef76A6EfAff52", force=True)
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def strat_ms(accounts):
     yield accounts.at("0x16388463d60FFE0661Cf7F1f31a7D658aC790ff7", force=True)
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def user(accounts):
     yield accounts[0]
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def rewards(accounts):
     yield accounts[1]
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def guardian(accounts):
     yield accounts[2]
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def management(accounts):
     yield accounts[3]
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def strategist(accounts):
     yield accounts[4]
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def keeper(accounts):
     yield accounts[5]
 
@@ -71,8 +71,8 @@ token_addresses = {
         # "WETH",  # WETH
         # 'LINK', # LINK
         # 'USDT', # USDT
-        # "DAI", # DAI
-        # "USDC",  # USDC
+        "DAI", # DAI
+        "USDC",  # USDC
     ],
     scope="session",
     autouse=True,
@@ -111,8 +111,8 @@ token_prices = {
 @pytest.fixture(autouse=True)
 def amount(token, token_whale, user):
     # this will get the number of tokens (around $1m worth of token)
-    amillion = round(1_000_000 / token_prices[token.symbol()])
-    amount = amillion * 10 ** token.decimals()
+    base_amount = round(1_000_000 / token_prices[token.symbol()])
+    amount = base_amount * 10 ** token.decimals()
     # In order to get some funds for the token you are about to use,
     # it impersonate a whale address
     if amount > token.balanceOf(token_whale):

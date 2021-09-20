@@ -71,7 +71,7 @@ token_addresses = {
         # "WETH",  # WETH
         # 'LINK', # LINK
         # 'USDT', # USDT
-        "DAI", # DAI
+        "DAI",  # DAI
         "USDC",  # USDC
     ],
     scope="session",

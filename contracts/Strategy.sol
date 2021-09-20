@@ -553,17 +553,17 @@ contract Strategy is BaseStrategyInitializable, ICallee {
 
     function _leverUpFlashLoan(uint256 amount) internal returns (uint256) {
         (uint256 deposits, uint256 borrows) = getCurrentPosition();
-        uint256 depositToMeetLtv =
+        uint256 depositsToMeetLtv =
             getDepositFromBorrow(borrows, maxBorrowCollatRatio);
-        uint256 depositDeficitToMeetLtv = 0;
-        if (depositToMeetLtv > deposits) {
-            depositDeficitToMeetLtv = depositToMeetLtv.sub(deposits);
+        uint256 depositsDeficitToMeetLtv = 0;
+        if (depositsToMeetLtv > deposits) {
+            depositsDeficitToMeetLtv = depositsToMeetLtv.sub(deposits);
         }
         return
             FlashLoanLib.doDyDxFlashLoan(
                 false,
                 amount,
-                depositDeficitToMeetLtv,
+                depositsDeficitToMeetLtv,
                 address(want)
             );
     }

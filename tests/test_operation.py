@@ -159,7 +159,7 @@ def test_emergency_exit(
 
 
 @pytest.mark.parametrize(
-    "starting_debt_ratio", [100, 500, 1_000, 2_500, 5_000, 7_500, 9_500]
+    "starting_debt_ratio", [100, 500, 1_000, 2_500, 5_000, 7_500, 9_500, 9_900]
 )
 def test_increase_debt_ratio(
     chain,
@@ -197,7 +197,7 @@ def test_increase_debt_ratio(
 
 
 @pytest.mark.parametrize(
-    "ending_debt_ratio", [100, 500, 1_000, 2_500, 5_000, 7_500, 9_500]
+    "ending_debt_ratio", [100, 500, 1_000, 2_500, 5_000, 7_500, 9_500, 9_900]
 )
 def test_decrease_debt_ratio(
     chain,

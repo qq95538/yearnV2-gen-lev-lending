@@ -21,6 +21,8 @@ library FlashLoanLib {
     event Leverage(
         uint256 amountRequested,
         uint256 amountGiven,
+        uint256 ethUsed,
+        uint256 amountToCloseLTVGap,
         bool deficit,
         address flashLoan
     );
@@ -101,7 +103,14 @@ library FlashLoanLib {
 
         solo.operate(accountInfos, operations);
 
-        emit Leverage(amount, requiredETH, deficit, address(solo));
+        emit Leverage(
+            amountDesired,
+            amount,
+            requiredETH,
+            depositToCloseLTVGap,
+            deficit,
+            address(solo)
+        );
 
         return amount; // we need to return the amount of Token we have changed our position in
     }

@@ -131,7 +131,7 @@ def test_large_manual_deleverage_to_zero(
     assert strategy.getCurrentSupply() <= strategy.minWant()
 
     if strategy.estimatedRewardsInWant() >= strategy.minRewardToSell():
-        strategy.manualClaimAndSellRewards()
+        strategy.manualClaimAndSellRewards({"from": gov})
 
     utils.sleep()
     utils.strategy_status(vault, strategy)

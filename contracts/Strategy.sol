@@ -56,15 +56,18 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     IVariableDebtToken public debtToken;
 
     // SWAP routers
-    IUni private constant V2ROUTER =
+    IUni private constant UNI_V2_ROUTER =
         IUni(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
-    ISwapRouter private constant V3ROUTER =
+    IUni private constant SUSHI_V2_ROUTER =
+        IUni(0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F);
+    ISwapRouter private constant UNI_V3_ROUTER =
         ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564);
 
     // OPS State Variables
     uint256 private constant DEFAULT_COLLAT_TARGET_MARGIN = 0.02 ether;
     uint256 private constant DEFAULT_COLLAT_MAX_MARGIN = 0.005 ether;
     uint256 private constant LIQUIDATION_WARNING_THRESHOLD = 0.01 ether;
+
     uint256 public maxBorrowCollatRatio; // The maximum the aave protocol will let us borrow
     uint256 public targetCollatRatio; // The LTV we are levering up to
     uint256 public maxCollatRatio; // Closest to liquidation we'll risk
@@ -76,17 +79,20 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     uint256 public minRatio = 0.005 ether;
     uint256 public minRewardToSell = 1e15;
 
+    enum SwapRouter {UniV2, SushiV2, UniV3}
+    SwapRouter public swapRouter = SwapRouter.UniV2; // only applied to aave => want, stkAave => aave always uses v3
+
     bool public sellStkAave = true;
     bool public cooldownStkAave = false;
-    bool public useUniV3 = false; // only applied to aave => want, stkAave => aave always uses v3
     uint256 public maxStkAavePriceImpactBps = 1000;
 
     uint24 public stkAaveToAaveSwapFee = 10000;
     uint24 public aaveToWethSwapFee = 3000;
     uint24 public wethToWantSwapFee = 3000;
 
-    uint16 private constant referral = 0; // Aave's referral code
     bool private alreadyAdjusted = false; // Signal whether a position adjust was done in prepareReturn
+
+    uint16 private constant referral = 0; // Aave's referral code
 
     uint256 private constant MAX_BPS = 1e4;
     uint256 private constant BPS_WAD_RATIO = 1e14;
@@ -121,9 +127,9 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         minRewardToSell = 1e15;
 
         // reward params
+        swapRouter = SwapRouter.UniV2;
         sellStkAave = true;
         cooldownStkAave = false;
-        useUniV3 = false;
         maxStkAavePriceImpactBps = 1000;
 
         stkAaveToAaveSwapFee = 10000;
@@ -137,16 +143,12 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         debtToken = IVariableDebtToken(_debtToken);
 
         // Let collateral targets
-        (, uint256 ltv, uint256 liquidationThreshold, , , , , , , ) =
-            protocolDataProvider.getReserveConfigurationData(address(want));
-        liquidationThreshold = liquidationThreshold.mul(BPS_WAD_RATIO); // convert bps to wad
+        (uint256 ltv, uint256 liquidationThreshold) = getProtocolCollatRatios();
         targetCollatRatio = liquidationThreshold.sub(
             DEFAULT_COLLAT_TARGET_MARGIN
         );
         maxCollatRatio = liquidationThreshold.sub(DEFAULT_COLLAT_MAX_MARGIN);
-        maxBorrowCollatRatio = ltv.mul(BPS_WAD_RATIO).sub(
-            DEFAULT_COLLAT_MAX_MARGIN
-        );
+        maxBorrowCollatRatio = ltv.sub(DEFAULT_COLLAT_MAX_MARGIN);
 
         DECIMALS = 10**vault.decimals();
 
@@ -159,9 +161,10 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         approveMaxSpend(weth, FlashLoanLib.SOLO);
 
         // approve swap router spend
-        approveMaxSpend(address(stkAave), address(V3ROUTER));
-        approveMaxSpend(aave, address(V2ROUTER));
-        approveMaxSpend(aave, address(V3ROUTER));
+        approveMaxSpend(address(stkAave), address(UNI_V3_ROUTER));
+        approveMaxSpend(aave, address(UNI_V2_ROUTER));
+        approveMaxSpend(aave, address(SUSHI_V2_ROUTER));
+        approveMaxSpend(aave, address(UNI_V3_ROUTER));
     }
 
     // SETTERS
@@ -170,12 +173,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         uint256 _maxCollatRatio,
         uint256 _maxBorrowCollatRatio
     ) external onlyVaultManagers {
-        (, uint256 ltv, uint256 liquidationThreshold, , , , , , , ) =
-            protocolDataProvider.getReserveConfigurationData(address(want));
-
-        // convert bps to wad
-        ltv = ltv.mul(BPS_WAD_RATIO);
-        liquidationThreshold = liquidationThreshold.mul(BPS_WAD_RATIO);
+        (uint256 ltv, uint256 liquidationThreshold) = getProtocolCollatRatios();
 
         require(_targetCollatRatio < liquidationThreshold);
         require(_maxCollatRatio < liquidationThreshold);
@@ -204,9 +202,9 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     }
 
     function setRewardBehavior(
+        SwapRouter _swapRouter,
         bool _sellStkAave,
         bool _cooldownStkAave,
-        bool _useUniV3,
         uint256 _minRewardToSell,
         uint256 _maxStkAavePriceImpactBps,
         uint24 _stkAaveToAaveSwapFee,
@@ -214,9 +212,9 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         uint24 _wethToWantSwapFee
     ) external onlyVaultManagers {
         require(_maxStkAavePriceImpactBps <= MAX_BPS);
+        swapRouter = _swapRouter;
         sellStkAave = _sellStkAave;
         cooldownStkAave = _cooldownStkAave;
-        useUniV3 = _useUniV3;
         minRewardToSell = _minRewardToSell;
         maxStkAavePriceImpactBps = _maxStkAavePriceImpactBps;
         stkAaveToAaveSwapFee = _stkAaveToAaveSwapFee;
@@ -409,11 +407,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
             return false;
         }
         // pull the liquidation liquidationThreshold from aave to be extra safu
-        (, , uint256 liquidationThreshold, , , , , , , ) =
-            protocolDataProvider.getReserveConfigurationData(address(want));
-
-        // convert bps to wad
-        liquidationThreshold = liquidationThreshold.mul(BPS_WAD_RATIO);
+        (, uint256 liquidationThreshold) = getProtocolCollatRatios();
 
         uint256 currentCollatRatio = getCurrentCollatRatio();
 
@@ -464,10 +458,13 @@ contract Strategy is BaseStrategyInitializable, ICallee {
 
     function _claimAndSellRewards() internal returns (uint256) {
         uint256 stkAaveBalance = balanceOfStkAave();
-        uint8 cooldownStatus = stkAaveBalance == 0 ? 0 : _checkCooldown(); // don't check status if we have no stkAave
+        CooldownStatus cooldownStatus;
+        if (stkAaveBalance > 0) {
+            cooldownStatus = _checkCooldown(); // don't check status if we have no stkAave
+        }
 
         // If it's the claim period claim
-        if (stkAaveBalance > 0 && cooldownStatus == 1) {
+        if (stkAaveBalance > 0 && cooldownStatus == CooldownStatus.Claim) {
             // redeem AAVE from stkAave
             stkAave.claimRewards(address(this), type(uint256).max);
             stkAave.redeem(address(this), stkAaveBalance);
@@ -483,7 +480,11 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         stkAaveBalance = balanceOfStkAave();
 
         // request start of cooldown period, if there's no cooldown in progress
-        if (cooldownStkAave && stkAaveBalance > 0 && cooldownStatus == 0) {
+        if (
+            cooldownStkAave &&
+            stkAaveBalance > 0 &&
+            cooldownStatus == CooldownStatus.None
+        ) {
             stkAave.cooldown();
         }
 
@@ -760,8 +761,11 @@ contract Strategy is BaseStrategyInitializable, ICallee {
             return amount;
         }
 
+        // KISS: just use a v2 router for quotes which aren't used in critical logic
+        IUni router =
+            swapRouter == SwapRouter.SushiV2 ? SUSHI_V2_ROUTER : UNI_V2_ROUTER;
         uint256[] memory amounts =
-            IUni(V2ROUTER).getAmountsOut(
+            router.getAmountsOut(
                 amount,
                 getTokenOutPathV2(token, address(want))
             );
@@ -782,7 +786,9 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     // 0 = no cooldown or past withdraw period
     // 1 = claim period
     // 2 = cooldown initiated, future claim period
-    function _checkCooldown() internal view returns (uint8) {
+    enum CooldownStatus {None, Claim, Initiated}
+
+    function _checkCooldown() internal view returns (CooldownStatus) {
         uint256 cooldownStartTimestamp =
             IStakedAave(stkAave).stakersCooldowns(address(this));
         uint256 COOLDOWN_SECONDS = IStakedAave(stkAave).COOLDOWN_SECONDS();
@@ -791,16 +797,16 @@ contract Strategy is BaseStrategyInitializable, ICallee {
             cooldownStartTimestamp.add(COOLDOWN_SECONDS);
 
         if (cooldownStartTimestamp == 0) {
-            return 0;
+            return CooldownStatus.None;
         }
         if (
             block.timestamp > nextClaimStartTimestamp &&
             block.timestamp <= nextClaimStartTimestamp.add(UNSTAKE_WINDOW)
         ) {
-            return 1;
+            return CooldownStatus.Claim;
         }
         if (block.timestamp < nextClaimStartTimestamp) {
-            return 2;
+            return CooldownStatus.Initiated;
         }
     }
 
@@ -848,8 +854,8 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         if (amountIn == 0) {
             return;
         }
-        if (useUniV3) {
-            V3ROUTER.exactInput(
+        if (swapRouter == SwapRouter.UniV3) {
+            UNI_V3_ROUTER.exactInput(
                 ISwapRouter.ExactInputParams(
                     getTokenOutPathV3(address(aave), address(want)),
                     address(this),
@@ -859,7 +865,11 @@ contract Strategy is BaseStrategyInitializable, ICallee {
                 )
             );
         } else {
-            V2ROUTER.swapExactTokensForTokens(
+            IUni router =
+                swapRouter == SwapRouter.UniV2
+                    ? UNI_V2_ROUTER
+                    : SUSHI_V2_ROUTER;
+            router.swapExactTokensForTokens(
                 amountIn,
                 minOut,
                 getTokenOutPathV2(address(aave), address(want)),
@@ -872,7 +882,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     function _sellSTKAAVEToAAVE(uint256 amountIn, uint256 minOut) internal {
         // Swap Rewards in UNIV3
         // NOTE: Unoptimized, can be frontrun and most importantly this pool is low liquidity
-        V3ROUTER.exactInputSingle(
+        UNI_V3_ROUTER.exactInputSingle(
             ISwapRouter.ExactInputSingleParams(
                 address(stkAave),
                 address(aave),
@@ -890,6 +900,18 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         assets = new address[](2);
         assets[0] = address(aToken);
         assets[1] = address(debtToken);
+    }
+
+    function getProtocolCollatRatios()
+        internal
+        view
+        returns (uint256 ltv, uint256 liquidationThreshold)
+    {
+        (, ltv, liquidationThreshold, , , , , , , ) = protocolDataProvider
+            .getReserveConfigurationData(address(want));
+        // convert bps to wad
+        ltv = ltv.mul(BPS_WAD_RATIO);
+        liquidationThreshold = liquidationThreshold.mul(BPS_WAD_RATIO);
     }
 
     function getBorrowFromDeposit(uint256 deposit, uint256 collatRatio)

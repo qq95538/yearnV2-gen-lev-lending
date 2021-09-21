@@ -33,6 +33,7 @@ def test_operation(
     )
 
 
+@pytest.mark.parametrize("swap_router", [0, 1, 2])
 def test_apr(
     chain,
     accounts,
@@ -43,8 +44,21 @@ def test_apr(
     user,
     strategist,
     amount,
+    swap_router,
     RELATIVE_APPROX,
 ):
+    strategy.setRewardBehavior(
+        swap_router,
+        strategy.sellStkAave(),
+        strategy.cooldownStkAave(),
+        strategy.minRewardToSell(),
+        strategy.maxStkAavePriceImpactBps(),
+        strategy.stkAaveToAaveSwapFee(),
+        strategy.aaveToWethSwapFee(),
+        strategy.wethToWantSwapFee(),
+        {"from": gov},
+    )
+
     # Deposit to the vault
     actions.user_deposit(user, vault, token, amount)
 
@@ -79,7 +93,15 @@ def test_apr_with_cooldown(
 
     # Don't sell stkAave, cool it down
     strategy.setRewardBehavior(
-        False, True, True, 1e5, 0, 10000, 3000, 3000, {"from": gov}
+        1,
+        False,
+        True,
+        strategy.minRewardToSell(),
+        strategy.maxStkAavePriceImpactBps(),
+        strategy.stkAaveToAaveSwapFee(),
+        strategy.aaveToWethSwapFee(),
+        strategy.wethToWantSwapFee(),
+        {"from": gov},
     )
 
     # harvest
@@ -95,7 +117,7 @@ def test_apr_with_cooldown(
 
     strategy.harvest({"from": strategist})
     print(
-        f"APR: {(token.balanceOf(vault)-amount)*52*100/amount:.2f}% on {amount/10**token.decimals():,.2f}"
+        f"APR: {(token.balanceOf(vault)-amount)*52*100/amount:.2f}% on {amount/10**token.decimals():,.2f} {token.symbol()}"
     )
 
 

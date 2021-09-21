@@ -99,16 +99,16 @@ def token_whale(token):
 
 token_prices = {
     "WBTC": 45_000,
-    "WETH": 3_500,
+    "WETH": 3_000,
     "LINK": 20,
-    "YFI": 30_000,
+    "YFI": 50_000,
     "USDT": 1,
     "USDC": 1,
     "DAI": 1,
 }
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture(autouse=True, scope="function")
 def amount(token, token_whale, user):
     # this will get the number of tokens (around $1m worth of token)
     base_amount = round(1_000_000 / token_prices[token.symbol()])
@@ -121,7 +121,7 @@ def amount(token, token_whale, user):
     yield amount
 
 
-@pytest.fixture()
+@pytest.fixture(scope="function")
 def big_amount(token, token_whale, user):
     # this will get the number of tokens (around $49m worth of token)
     fifty_minus_one_million = round(49_000_000 / token_prices[token.symbol()])

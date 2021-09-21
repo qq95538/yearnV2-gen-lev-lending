@@ -36,8 +36,7 @@ library FlashLoanLib {
     ILendingPool private constant lendingPool =
         ILendingPool(0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9);
 
-    // Aave's referral code
-    uint16 private constant referral = 0;
+    uint16 private constant referral = 7; // Yearn's aave referral code
 
     function doDyDxFlashLoan(
         bool deficit,
@@ -124,7 +123,7 @@ library FlashLoanLib {
             lp.repay(want, amount, 2, address(this));
         } else {
             // 2b. if levering up borrow and deposit
-            lp.borrow(want, amount, 2, 0, address(this));
+            lp.borrow(want, amount, 2, referral, address(this));
             lp.deposit(
                 want,
                 IERC20(want).balanceOf(address(this)),

@@ -92,7 +92,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
 
     bool private alreadyAdjusted = false; // Signal whether a position adjust was done in prepareReturn
 
-    uint16 private constant referral = 0; // Aave's referral code
+    uint16 private constant referral = 7; // Yearn's aave referral code
 
     uint256 private constant MAX_BPS = 1e4;
     uint256 private constant BPS_WAD_RATIO = 1e14;

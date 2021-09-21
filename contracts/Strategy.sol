@@ -217,6 +217,11 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         uint24 _aaveToWethSwapFee,
         uint24 _wethToWantSwapFee
     ) external onlyVaultManagers {
+        require(
+            _swapRouter == SwapRouter.UniV2 ||
+                _swapRouter == SwapRouter.SushiV2 ||
+                _swapRouter == SwapRouter.UniV3
+        );
         require(_maxStkAavePriceImpactBps <= MAX_BPS);
         swapRouter = _swapRouter;
         sellStkAave = _sellStkAave;

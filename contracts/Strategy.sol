@@ -55,6 +55,12 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     IAToken public aToken;
     IVariableDebtToken public debtToken;
 
+    // represents stkAave cooldown status
+    // 0 = no cooldown or past withdraw period
+    // 1 = claim period
+    // 2 = cooldown initiated, future claim period
+    enum CooldownStatus {None, Claim, Initiated}
+
     // SWAP routers
     IUni private constant UNI_V2_ROUTER =
         IUni(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
@@ -781,12 +787,6 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     {
         return tokenToWant(weth, _amtInWei);
     }
-
-    // returns cooldown status
-    // 0 = no cooldown or past withdraw period
-    // 1 = claim period
-    // 2 = cooldown initiated, future claim period
-    enum CooldownStatus {None, Claim, Initiated}
 
     function _checkCooldown() internal view returns (CooldownStatus) {
         uint256 cooldownStartTimestamp =

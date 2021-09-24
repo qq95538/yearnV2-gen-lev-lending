@@ -12,14 +12,14 @@ def test_large_deleverage_to_zero(
     utils.sleep(1)
     strategy.harvest({"from": strategist})
 
-    utils.strategy_status(vault, strategy)
-
     assert (
         pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX)
         == big_amount
     )
 
     utils.sleep(7 * 24 * 3600)
+
+    utils.strategy_status(vault, strategy)
 
     vault.revokeStrategy(strategy.address, {"from": gov})
     n = 0
@@ -51,8 +51,6 @@ def test_large_deleverage_parameter_change(
     utils.sleep(1)
     strategy.harvest({"from": strategist})
 
-    utils.strategy_status(vault, strategy)
-
     assert (
         pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX)
         == big_amount
@@ -66,6 +64,8 @@ def test_large_deleverage_parameter_change(
         strategy.maxBorrowCollatRatio(),
         {"from": gov},
     )
+
+    utils.strategy_status(vault, strategy)
 
     n = 0
     while (
@@ -99,12 +99,14 @@ def test_large_manual_deleverage_to_zero(
     utils.sleep(1)
     strategy.harvest({"from": strategist})
 
-    utils.strategy_status(vault, strategy)
-
     assert (
         pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX)
         == big_amount
     )
+
+    chain.sleep(7 * 24 * 3600)
+
+    utils.strategy_status(vault, strategy)
 
     n = 0
     while strategy.getCurrentSupply() > strategy.minWant():
@@ -125,20 +127,21 @@ def test_large_manual_deleverage_to_zero(
     print(f"manualDeleverage calls: {n} iterations")
 
     utils.sleep(1)
-    strategy.manualReleaseWant(
-        strategy.getCurrentPosition().dict()["deposits"], {"from": gov}
-    )
+    deposits = strategy.getCurrentPosition().dict()["deposits"]
+    while deposits > strategy.minWant():
+        strategy.manualReleaseWant(deposits, {"from": gov})
+        deposits = strategy.getCurrentPosition().dict()["deposits"]
     assert strategy.getCurrentSupply() <= strategy.minWant()
 
     if strategy.estimatedRewardsInWant() >= strategy.minRewardToSell():
-        strategy.manualClaimAndSellRewards()
+        strategy.manualClaimAndSellRewards({"from": gov})
 
     utils.sleep()
     utils.strategy_status(vault, strategy)
     assert (
         pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX)
         == big_amount
-    )
+    ) or strategy.estimatedTotalAssets() > big_amount
 
     vault.revokeStrategy(strategy.address, {"from": gov})
     strategy.harvest({"from": strategist})

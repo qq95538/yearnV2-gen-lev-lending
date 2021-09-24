@@ -22,6 +22,9 @@ def strategy_status(vault, strategy):
     print(f"Total Loss {to_units(vault, status['totalLoss'])}")
     print(f"Estimated Total Assets {to_units(vault, strategy.estimatedTotalAssets())}")
     print(
+        f"Estimated Total Rewards {to_units(vault, strategy.estimatedRewardsInWant())}"
+    )
+    print(
         f"Loose Want {to_units(vault, Contract(strategy.want()).balanceOf(strategy))}"
     )
     print(f"Current Lend {to_units(vault, lend)}")

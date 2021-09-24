@@ -21,6 +21,8 @@ library FlashLoanLib {
     event Leverage(
         uint256 amountRequested,
         uint256 amountGiven,
+        uint256 ethUsed,
+        uint256 amountToCloseLTVGap,
         bool deficit,
         address flashLoan
     );
@@ -36,12 +38,12 @@ library FlashLoanLib {
     ILendingPool private constant lendingPool =
         ILendingPool(0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9);
 
-    // Aave's referral code
-    uint16 private constant referral = 0;
+    uint16 private constant referral = 7; // Yearn's aave referral code
 
     function doDyDxFlashLoan(
         bool deficit,
         uint256 amountDesired,
+        uint256 depositToCloseLTVGap,
         address token
     ) public returns (uint256 amount) {
         if (amountDesired == 0) {
@@ -57,13 +59,22 @@ library FlashLoanLib {
                 collatRatioETH
             );
 
+            uint256 requiredEthToCloseLTVGap = 0;
+            if (depositToCloseLTVGap > 0) {
+                requiredEthToCloseLTVGap = _toETH(depositToCloseLTVGap, token);
+                requiredETH = requiredETH.add(requiredEthToCloseLTVGap);
+            }
+
             uint256 dxdyLiquidity = IERC20(weth).balanceOf(address(solo));
             if (requiredETH > dxdyLiquidity) {
                 requiredETH = dxdyLiquidity;
                 // NOTE: if we cap amountETH, we reduce amountToken we are taking too
-                amount = _fromETH(requiredETH, token).mul(collatRatioETH).div(
-                    1 ether
-                );
+                amount = _fromETH(
+                    requiredETH.sub(requiredEthToCloseLTVGap),
+                    token
+                )
+                    .mul(collatRatioETH)
+                    .div(1 ether);
             }
         }
 
@@ -92,7 +103,14 @@ library FlashLoanLib {
 
         solo.operate(accountInfos, operations);
 
-        emit Leverage(amountDesired, requiredETH, deficit, address(solo));
+        emit Leverage(
+            amountDesired,
+            amount,
+            requiredETH,
+            depositToCloseLTVGap,
+            deficit,
+            address(solo)
+        );
 
         return amount; // we need to return the amount of Token we have changed our position in
     }
@@ -114,7 +132,7 @@ library FlashLoanLib {
             lp.repay(want, amount, 2, address(this));
         } else {
             // 2b. if levering up borrow and deposit
-            lp.borrow(want, amount, 2, 0, address(this));
+            lp.borrow(want, amount, 2, referral, address(this));
             lp.deposit(
                 want,
                 IERC20(want).balanceOf(address(this)),

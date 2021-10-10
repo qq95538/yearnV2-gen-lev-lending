@@ -66,13 +66,13 @@ token_addresses = {
 # TODO: uncomment those tokens you want to test as want
 @pytest.fixture(
     params=[
-        "WBTC",  # WBTC
-        "YFI",  # YFI
+        # "WBTC",  # WBTC
+        # "YFI",  # YFI
         # "WETH",  # WETH
         # 'LINK', # LINK
         # 'USDT', # USDT
-        "DAI",  # DAI
-        # "USDC",  # USDC
+        # "DAI",  # DAI
+        "USDC",  # USDC
     ],
     scope="session",
     autouse=True,
@@ -148,12 +148,11 @@ def weth_amount(user, weth):
 
 
 @pytest.fixture(scope="function", autouse=True)
-def vault(pm, gov, rewards, guardian, management, token):
+def vault(pm, gov, rewards, guardian, token):
     Vault = pm(config["dependencies"][0]).Vault
     vault = guardian.deploy(Vault)
-    vault.initialize(token, gov, rewards, "", "", guardian, management)
+    vault.initialize(token, gov, rewards, "", "", guardian)
     vault.setDepositLimit(2 ** 256 - 1, {"from": gov})
-    vault.setManagement(management, {"from": gov})
     vault.setManagementFee(0, {"from": gov})
     yield vault
 
@@ -172,7 +171,7 @@ def live_vault(registry, token):
 def strategy(chain, strategist, keeper, vault, Strategy, gov, weth, dyDxActive):
     strategy = strategist.deploy(Strategy, vault)
     strategy.setKeeper(keeper)
-    vault.addStrategy(strategy, 10_000, 0, 2 ** 256 - 1, 1_000, {"from": gov})
+    vault.addStrategy(strategy, 10_000, 2 ** 256 - 1, 1_000, {"from": gov})
 
     strategy.setIsDyDxActive(dyDxActive, {"from": gov})
 

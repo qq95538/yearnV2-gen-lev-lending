@@ -6,9 +6,7 @@ pragma solidity 0.6.12;
 pragma experimental ABIEncoderV2;
 
 // These are the core Yearn libraries
-import {
-    BaseStrategyInitializable
-} from "@yearn/yearn-vaults/contracts/BaseStrategy.sol";
+import {BaseStrategy} from "@yearn/yearn-vaults/contracts/BaseStrategy.sol";
 
 import {
     SafeERC20,
@@ -32,7 +30,15 @@ import "../interfaces/aave/ILendingPool.sol";
 import "./FlashLoanLib.sol";
 import "../interfaces/dydx/ICallee.sol";
 
-contract Strategy is BaseStrategyInitializable, ICallee {
+interface IERC20Meta {
+    function name() external view returns (string memory);
+
+    function symbol() external view returns (string memory);
+
+    function decimals() external view returns (uint256);
+}
+
+contract Strategy is BaseStrategy, ICallee {
     using SafeERC20 for IERC20;
     using Address for address;
     using SafeMath for uint256;
@@ -92,7 +98,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     bool public cooldownStkAave = false;
     uint256 public maxStkAavePriceImpactBps = 1000;
 
-    uint24 public stkAaveToAaveSwapFee = 10000;
+    uint24 public stkAaveToAaveSwapFee = 3000;
     uint24 public aaveToWethSwapFee = 3000;
     uint24 public wethToWantSwapFee = 3000;
 
@@ -106,17 +112,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     uint256 private constant PESSIMISM_FACTOR = 1000;
     uint256 private DECIMALS;
 
-    constructor(address _vault) public BaseStrategyInitializable(_vault) {
-        _initializeThis();
-    }
-
-    function initialize(
-        address _vault,
-        address _strategist,
-        address _rewards,
-        address _keeper
-    ) external override {
-        _initialize(_vault, _strategist, _rewards, _keeper);
+    constructor(address _vault) public BaseStrategy(_vault) {
         _initializeThis();
     }
 
@@ -138,7 +134,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         cooldownStkAave = false;
         maxStkAavePriceImpactBps = 1000;
 
-        stkAaveToAaveSwapFee = 10000;
+        stkAaveToAaveSwapFee = 3000;
         aaveToWethSwapFee = 3000;
         wethToWantSwapFee = 3000;
 
@@ -156,7 +152,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         maxCollatRatio = liquidationThreshold.sub(DEFAULT_COLLAT_MAX_MARGIN);
         maxBorrowCollatRatio = ltv.sub(DEFAULT_COLLAT_MAX_MARGIN);
 
-        DECIMALS = 10**vault.decimals();
+        DECIMALS = 10**IERC20Meta(address(want)).decimals();
 
         // approve spend aave spend
         approveMaxSpend(address(want), address(lendingPool));
@@ -428,14 +424,6 @@ contract Strategy is BaseStrategyInitializable, ICallee {
 
         return (liquidationThreshold.sub(currentCollatRatio) <=
             LIQUIDATION_WARNING_THRESHOLD);
-    }
-
-    function liquidateAllPositions()
-        internal
-        override
-        returns (uint256 _amountFreed)
-    {
-        (_amountFreed, ) = liquidatePosition(type(uint256).max);
     }
 
     function prepareMigration(address _newStrategy) internal override {
@@ -784,15 +772,6 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         return amounts[amounts.length - 1];
     }
 
-    function ethToWant(uint256 _amtInWei)
-        public
-        view
-        override
-        returns (uint256)
-    {
-        return tokenToWant(weth, _amtInWei);
-    }
-
     function _checkCooldown() internal view returns (CooldownStatus) {
         uint256 cooldownStartTimestamp =
             IStakedAave(stkAave).stakersCooldowns(address(this));
@@ -948,5 +927,14 @@ contract Strategy is BaseStrategyInitializable, ICallee {
 
     function approveMaxSpend(address token, address spender) internal {
         IERC20(token).safeApprove(spender, type(uint256).max);
+    }
+
+    modifier onlyVaultManagers() {
+        require(isVaultManager(msg.sender));
+        _;
+    }
+
+    function isVaultManager(address addr) internal view returns (bool) {
+        return addr == governance() || addr == strategist;
     }
 }

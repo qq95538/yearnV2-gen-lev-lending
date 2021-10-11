@@ -28,9 +28,7 @@ def test_operation(
 
     # withdrawal
     vault.withdraw({"from": user})
-    assert (
-        pytest.approx(token.balanceOf(user), rel=RELATIVE_APPROX) == user_balance_before
-    )
+    assert token.balanceOf(user) >= user_balance_before
 
 
 @pytest.mark.parametrize("swap_router", [0, 1, 2])

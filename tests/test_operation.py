@@ -33,6 +33,37 @@ def test_operation(
     )
 
 
+def test_withdraw(
+    chain, accounts, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+):
+    # Deposit to the vault
+    user_balance_before = token.balanceOf(user)
+    actions.user_deposit(user, vault, token, amount)
+
+    # harvest
+    chain.sleep(1)
+    strategy.harvest({"from": strategist})
+    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
+
+    utils.sleep(1 * 24 * 3600)
+
+    utils.strategy_status(vault, strategy)
+    strategy.harvest({"from": strategist})
+    utils.sleep()
+
+    # withdrawal
+    for i in range(1, 10):
+        vault.withdraw(int(amount / 10), {"from": user})
+        assert token.balanceOf(user) >= user_balance_before * i / 10
+        utils.strategy_status(vault, strategy)
+
+    strategy.harvest({"from": strategist})
+    utils.sleep()
+    vault.withdraw(int(amount / 10), {"from": user})
+    assert token.balanceOf(user) > user_balance_before
+    utils.strategy_status(vault, strategy)
+
+
 @pytest.mark.parametrize("swap_router", [0, 1, 2])
 def test_apr(
     chain,

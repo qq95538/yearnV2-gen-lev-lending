@@ -33,12 +33,15 @@ def test_operation(
     )
 
 
+@pytest.mark.parametrize("use_flashloans", [True, False])
 def test_withdraw(
-    chain, accounts, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+    chain, token, vault, strategy, use_flashloans, user, strategist, amount, gov, RELATIVE_APPROX
 ):
     # Deposit to the vault
     user_balance_before = token.balanceOf(user)
     actions.user_deposit(user, vault, token, amount)
+
+    strategy.setIsDyDxActive(use_flashloans, {"from": gov})
 
     # harvest
     chain.sleep(1)
@@ -50,12 +53,22 @@ def test_withdraw(
     utils.strategy_status(vault, strategy)
     strategy.harvest({"from": strategist})
     utils.sleep()
+    
+    # remove this statement
+    if not use_flashloans:
+        strategy.setCollateralTargets(
+            strategy.maxBorrowCollatRatio() - (0.02 * 1e18),
+            strategy.maxCollatRatio(),
+            strategy.maxBorrowCollatRatio(), 
+            {"from": gov}
+        )
 
     # withdrawal
     for i in range(1, 10):
-        vault.withdraw(int(amount / 10), {"from": user})
-        assert token.balanceOf(user) >= user_balance_before * i / 10
+        print(i)
         utils.strategy_status(vault, strategy)
+        vault.withdraw(int(amount / 10), user, 10_000, {"from": user})
+        assert token.balanceOf(user) >= user_balance_before * i / 10
 
     strategy.harvest({"from": strategist})
     utils.sleep()

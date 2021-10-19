@@ -90,9 +90,9 @@ contract Strategy is BaseStrategyInitializable, ICallee {
 
     bool public sellStkAave = true;
     bool public cooldownStkAave = false;
-    uint256 public maxStkAavePriceImpactBps = 1000;
+    uint256 public maxStkAavePriceImpactBps = 500;
 
-    uint24 public stkAaveToAaveSwapFee = 10000;
+    uint24 public stkAaveToAaveSwapFee = 3000;
     uint24 public aaveToWethSwapFee = 3000;
     uint24 public wethToWantSwapFee = 3000;
 
@@ -136,9 +136,9 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         swapRouter = SwapRouter.UniV2;
         sellStkAave = true;
         cooldownStkAave = false;
-        maxStkAavePriceImpactBps = 1000;
+        maxStkAavePriceImpactBps = 500;
 
-        stkAaveToAaveSwapFee = 10000;
+        stkAaveToAaveSwapFee = 3000;
         aaveToWethSwapFee = 3000;
         wethToWantSwapFee = 3000;
 
@@ -234,7 +234,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     }
 
     function name() external view override returns (string memory) {
-        return "StrategyGenLevAAVE";
+        return ""; //return "StrategyGenLevAAVE";
     }
 
     function estimatedTotalAssets() public view override returns (uint256) {
@@ -515,6 +515,8 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         }
     }
 
+    event WTF(uint256 a, uint256 b, uint256 c);
+
     function _freeFunds(uint256 amountToFree) internal returns (uint256) {
         if (amountToFree == 0) return 0;
 
@@ -525,8 +527,12 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         uint256 newSupply = realAssets.sub(amountRequired);
         uint256 newBorrow = getBorrowFromSupply(newSupply, targetCollatRatio);
 
+        //emit WTF(amountRequired, newBorrow, borrows);
+
         // repay required amount
         _leverDownTo(newBorrow, borrows);
+
+        emit WTF(amountToFree, amountRequired, balanceOfWant());
 
         return balanceOfWant();
     }
@@ -615,36 +621,30 @@ contract Strategy is BaseStrategyInitializable, ICallee {
 
     function _leverDownTo(uint256 newAmountBorrowed, uint256 currentBorrowed)
         internal
-        returns (uint256)
     {
-        if (newAmountBorrowed >= currentBorrowed) {
-            // we don't need to repay
-            return 0;
-        }
+        if (currentBorrowed > newAmountBorrowed) {
+            uint256 totalRepayAmount = currentBorrowed.sub(newAmountBorrowed);
 
-        uint256 totalRepayAmount = currentBorrowed.sub(newAmountBorrowed);
-
-        if (isDyDxActive) {
-            totalRepayAmount = totalRepayAmount.sub(
-                _leverDownFlashLoan(totalRepayAmount)
-            );
-            _withdrawExcessCollateral();
-        }
-
-        for (
-            uint8 i = 0;
-            i < maxIterations && totalRepayAmount > minWant;
-            i++
-        ) {
-            uint256 toRepay = totalRepayAmount;
-            uint256 wantBalance = balanceOfWant();
-            if (toRepay > wantBalance) {
-                toRepay = wantBalance;
+            if (isDyDxActive) {
+                totalRepayAmount = totalRepayAmount.sub(
+                    _leverDownFlashLoan(totalRepayAmount)
+                );
             }
-            uint256 repaid = _repayWant(toRepay);
-            totalRepayAmount = totalRepayAmount.sub(repaid);
-            // withdraw collateral
-            _withdrawExcessCollateral();
+
+            for (
+                uint8 i = 0;
+                i < maxIterations && totalRepayAmount > minWant;
+                i++
+            ) {
+                _withdrawExcessCollateral(maxCollatRatio);
+                uint256 toRepay = totalRepayAmount;
+                uint256 wantBalance = balanceOfWant();
+                if (toRepay > wantBalance) {
+                    toRepay = wantBalance;
+                }
+                uint256 repaid = _repayWant(toRepay);
+                totalRepayAmount = totalRepayAmount.sub(repaid);
+            }
         }
 
         // deposit back to get targetCollatRatio (we always need to leave this in this ratio)
@@ -656,6 +656,8 @@ contract Strategy is BaseStrategyInitializable, ICallee {
             if (toDeposit > minWant) {
                 _depositCollateral(Math.min(toDeposit, balanceOfWant()));
             }
+        } else {
+            _withdrawExcessCollateral(targetCollatRatio);
         }
     }
 
@@ -668,9 +670,12 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         return FlashLoanLib.doDyDxFlashLoan(true, amount, 0, address(want));
     }
 
-    function _withdrawExcessCollateral() internal returns (uint256 amount) {
+    function _withdrawExcessCollateral(uint256 collatRatio)
+        internal
+        returns (uint256 amount)
+    {
         (uint256 deposits, uint256 borrows) = getCurrentPosition();
-        uint256 theoDeposits = getDepositFromBorrow(borrows, maxCollatRatio);
+        uint256 theoDeposits = getDepositFromBorrow(borrows, collatRatio);
         if (deposits > theoDeposits) {
             uint256 toWithdraw = deposits.sub(theoDeposits);
             return _withdrawCollateral(toWithdraw);

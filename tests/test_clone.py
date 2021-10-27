@@ -5,12 +5,11 @@ from utils import actions, utils
 def test_clone(
     vault,
     strategy,
+    factory,
     token,
     amount,
     weth,
     strategist,
-    rewards,
-    keeper,
     gov,
     user,
     RELATIVE_APPROX,
@@ -24,8 +23,8 @@ def test_clone(
     strategy.harvest({"from": strategist})
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
-    cloned_strategy = strategy.clone(
-        vault, strategist, rewards, keeper, {"from": strategist}
+    cloned_strategy = factory.cloneLevAave(
+        vault, {"from": strategist}
     ).return_value
     cloned_strategy = Strategy.at(cloned_strategy)
 

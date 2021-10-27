@@ -102,6 +102,7 @@ def test_large_deleverage_parameter_change(
         strategy.targetCollatRatio() / 2,
         strategy.maxCollatRatio(),
         strategy.maxBorrowCollatRatio(),
+        strategy.daiBorrowCollatRatio(),
         {"from": gov},
     )
 

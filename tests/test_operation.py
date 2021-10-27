@@ -33,15 +33,12 @@ def test_operation(
     )
 
 
-@pytest.mark.parametrize("use_flashloans", [True, False])
 def test_withdraw(
-    chain, token, vault, strategy, use_flashloans, user, strategist, amount, gov, RELATIVE_APPROX
+    chain, token, vault, strategy, flashloans_active, user, strategist, amount, gov, RELATIVE_APPROX
 ):
     # Deposit to the vault
     user_balance_before = token.balanceOf(user)
     actions.user_deposit(user, vault, token, amount)
-
-    strategy.setIsDyDxActive(use_flashloans, {"from": gov})
 
     # harvest
     chain.sleep(1)
@@ -55,11 +52,12 @@ def test_withdraw(
     utils.sleep()
     
     # remove this statement
-    if not use_flashloans:
+    if not flashloans_active:
         strategy.setCollateralTargets(
             strategy.maxBorrowCollatRatio() - (0.02 * 1e18),
             strategy.maxCollatRatio(),
             strategy.maxBorrowCollatRatio(), 
+            strategy.daiBorrowCollatRatio(), 
             {"from": gov}
         )
 
@@ -70,6 +68,7 @@ def test_withdraw(
         vault.withdraw(int(amount / 10), user, 10_000, {"from": user})
         assert token.balanceOf(user) >= user_balance_before * i / 10
 
+    utils.sleep(1)
     strategy.harvest({"from": strategist})
     utils.sleep()
     vault.withdraw(int(amount / 10), {"from": user})
@@ -196,7 +195,7 @@ def test_emergency_exit(
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
     # set emergency and exit
-    strategy.setEmergencyExit()
+    strategy.setEmergencyExit({"from": strategist})
     chain.sleep(1)
     strategy.harvest({"from": strategist})
     assert strategy.estimatedTotalAssets() < amount
@@ -358,17 +357,17 @@ def test_triggers(chain, gov, vault, strategy, token, amount, user, strategist):
     actions.user_deposit(user, vault, token, amount)
     vault.updateStrategyDebtRatio(strategy.address, 5_000, {"from": gov})
     chain.sleep(1)
-    strategy.harvest()
+    strategy.harvest({"from": strategist})
 
     strategy.harvestTrigger(0)
     strategy.tendTrigger(0)
 
 
-def test_tend(chain, gov, vault, strategy, token, amount, user, RELATIVE_APPROX):
+def test_tend(chain, gov, vault, strategy, token, amount, user, strategist, RELATIVE_APPROX):
     # Deposit to the vault and harvest
     actions.user_deposit(user, vault, token, amount)
     chain.sleep(1)
-    strategy.harvest()
+    strategy.harvest({"from": strategist})
 
     liquidationThreshold = (
         Contract("0x057835Ad21a177dbdd3090bB1CAE03EaCF78Fc6d")  # ProtocolDataProvider
@@ -384,11 +383,11 @@ def test_tend(chain, gov, vault, strategy, token, amount, user, RELATIVE_APPROX)
     actions.generate_loss(strategy, toLose)
     utils.strategy_status(vault, strategy)
 
-    strategy.setDebtThreshold(toLose * 1.1)  # prevent harvestTrigger
+    strategy.setDebtThreshold(toLose * 1.1, {"from": strategist})  # prevent harvestTrigger
 
     assert strategy.tendTrigger(0)
 
-    strategy.tend()
+    strategy.tend({"from": strategist})
 
     utils.strategy_status(vault, strategy)
 

@@ -49,25 +49,25 @@ def keeper(accounts):
 
 
 @pytest.fixture(autouse=True)
-def FlashLoanLibrary(FlashLoanLib, gov):
-    yield gov.deploy(FlashLoanLib)
+def FlashMaintLibrary(FlashMintLib, gov):
+    yield gov.deploy(FlashMintLib)
 
 
 token_addresses = {
     "WBTC": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",  # WBTC
-    "YFI": "0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e",  # YFI
+    "YFI":  "0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e",  # YFI
     "WETH": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH
     "LINK": "0x514910771AF9Ca656af840dff83E8264EcF986CA",  # LINK
     "USDT": "0xdAC17F958D2ee523a2206206994597C13D831ec7",  # USDT
-    "DAI": "0x6B175474E89094C44Da98b954EedeAC495271d0F",  # DAI
+    "DAI":  "0x6B175474E89094C44Da98b954EedeAC495271d0F",  # DAI
     "USDC": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",  # USDC
 }
 
 # TODO: uncomment those tokens you want to test as want
 @pytest.fixture(
     params=[
-        "WBTC",  # WBTC
-        "YFI",  # YFI
+        #"WBTC",  # WBTC
+        #"YFI",  # YFI
         # "WETH",  # WETH
         # 'LINK', # LINK
         # 'USDT', # USDT
@@ -169,15 +169,14 @@ def live_vault(registry, token):
 
 
 @pytest.fixture(scope="function")
-def strategy(chain, strategist, keeper, vault, Strategy, gov, weth, dyDxActive):
-    strategy = strategist.deploy(Strategy, vault)
-    strategy.setKeeper(keeper)
+def factory(strategist, vault, LevAaveFactory):
+    yield strategist.deploy(LevAaveFactory, vault)
+
+@pytest.fixture(scope="function")
+def strategy(chain, keeper, vault, factory, gov, strategist, Strategy):
+    strategy = Strategy.at(factory.original())
+    strategy.setKeeper(keeper, {"from": strategist})
     vault.addStrategy(strategy, 10_000, 0, 2 ** 256 - 1, 1_000, {"from": gov})
-
-    strategy.setIsDyDxActive(dyDxActive, {"from": gov})
-
-    # send WETH to repay 2 wei+ each flashloan
-    weth.transfer(strategy, 1e6, {"from": "0xBA12222222228d8Ba445958a75a0704d566BF2C8"})
     chain.sleep(1)
     chain.mine()
     yield strategy
@@ -193,14 +192,14 @@ def enable_healthcheck(strategy, gov):
 @pytest.fixture(
     params=[
         True,
-        # False,
+        False,
     ],
-    scope="session",
-    autouse=True,
+    scope="function",
 )
-def dyDxActive(request):
-    isActive = request.param
-    yield isActive
+def flashloans_active(request, strategy, gov):
+    is_active = request.param
+    strategy.setIsFlashMintActive(is_active, {"from": gov})
+    yield is_active
 
 
 @pytest.fixture(scope="session", autouse=True)

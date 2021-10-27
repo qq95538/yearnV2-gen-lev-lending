@@ -550,8 +550,6 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         // repay required amount
         _leverDownTo(newBorrow, borrows);
 
-        emit WTF(amountToFree, amountRequired, balanceOfWant());
-
         return balanceOfWant();
     }
 

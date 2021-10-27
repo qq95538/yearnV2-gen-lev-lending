@@ -61,31 +61,23 @@ library FlashMintLib {
         // calculate amount of dai we need
         uint256 requiredDAI;
         {
-            bool isDai = (token == dai);
-
-            requiredDAI = (isDai ? amount : _toDAI(amount, token))
-                .mul(COLLAT_RATIO_PRECISION)
-                .div(collatRatioDAI);
+            requiredDAI = _toDAI(amount, token).mul(COLLAT_RATIO_PRECISION).div(
+                collatRatioDAI
+            );
 
             uint256 requiredDAIToCloseLTVGap = 0;
             if (depositToCloseLTVGap > 0) {
-                requiredDAIToCloseLTVGap = isDai
-                    ? depositToCloseLTVGap
-                    : _toDAI(depositToCloseLTVGap, token);
+                requiredDAIToCloseLTVGap = _toDAI(depositToCloseLTVGap, token);
                 requiredDAI = requiredDAI.add(requiredDAIToCloseLTVGap);
             }
 
             uint256 _maxLiquidity = maxLiquidity();
             if (requiredDAI > _maxLiquidity) {
                 requiredDAI = _maxLiquidity;
-                // NOTE: if we cap amountETH, we reduce amountToken we are taking too
-                amount = (
-                    isDai
-                        ? requiredDAI.sub(requiredDAIToCloseLTVGap)
-                        : _fromDAI(
-                            requiredDAI.sub(requiredDAIToCloseLTVGap),
-                            token
-                        )
+                // NOTE: if we cap amountDAI, we reduce amountToken we are taking too
+                amount = _fromDAI(
+                    requiredDAI.sub(requiredDAIToCloseLTVGap),
+                    token
                 )
                     .mul(collatRatioDAI)
                     .div(COLLAT_RATIO_PRECISION);

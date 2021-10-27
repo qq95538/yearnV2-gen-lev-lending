@@ -209,6 +209,10 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         isFlashMintActive = _isFlashMintActive;
     }
 
+    function setWithdrawCheck(bool _withdrawCheck) external onlyVaultManagers {
+        withdrawCheck = _withdrawCheck;
+    }
+
     function setMinsAndMaxs(
         uint256 _minWant,
         uint256 _minRatio,
@@ -648,12 +652,14 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
                 );
             }
 
+            uint256 _maxCollatRatio = maxCollatRatio;
+
             for (
                 uint8 i = 0;
                 i < maxIterations && totalRepayAmount > minWant;
                 i++
             ) {
-                _withdrawExcessCollateral(maxCollatRatio);
+                _withdrawExcessCollateral(_maxCollatRatio);
                 uint256 toRepay = totalRepayAmount;
                 uint256 wantBalance = balanceOfWant();
                 if (toRepay > wantBalance) {
@@ -666,15 +672,16 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
 
         // deposit back to get targetCollatRatio (we always need to leave this in this ratio)
         (uint256 deposits, uint256 borrows) = getCurrentPosition();
+        uint256 _targetCollatRatio = targetCollatRatio;
         uint256 targetDeposit =
-            getDepositFromBorrow(borrows, targetCollatRatio);
+            getDepositFromBorrow(borrows, _targetCollatRatio);
         if (targetDeposit > deposits) {
             uint256 toDeposit = targetDeposit.sub(deposits);
             if (toDeposit > minWant) {
                 _depositCollateral(Math.min(toDeposit, balanceOfWant()));
             }
         } else {
-            _withdrawExcessCollateral(targetCollatRatio);
+            _withdrawExcessCollateral(_targetCollatRatio);
         }
     }
 

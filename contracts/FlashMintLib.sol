@@ -133,7 +133,7 @@ library FlashMintLib {
                     referral
                 );
                 lp.repay(
-                    want,
+                    dai,
                     IERC20(dai).balanceOf(address(this)),
                     2,
                     address(this)
@@ -146,7 +146,7 @@ library FlashMintLib {
                     address(this),
                     referral
                 );
-                lp.borrow(want, amount, 2, referral, address(this));
+                lp.borrow(dai, amount, 2, referral, address(this));
                 lp.withdraw(dai, amountFlashmint.sub(amount), address(this));
             }
         } else {

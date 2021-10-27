@@ -66,12 +66,12 @@ token_addresses = {
 # TODO: uncomment those tokens you want to test as want
 @pytest.fixture(
     params=[
-        "WBTC",  # WBTC
-        "YFI",  # YFI
-        # "WETH",  # WETH
+        #"WBTC",  # WBTC
+        #"YFI",  # YFI
+        "WETH",  # WETH
         # 'LINK', # LINK
         # 'USDT', # USDT
-        "DAI",  # DAI
+        #"DAI",  # DAI
         # "USDC",  # USDC
     ],
     scope="session",
@@ -98,10 +98,10 @@ def token_whale(token):
 
 
 token_prices = {
-    "WBTC": 45_000,
-    "WETH": 3_000,
+    "WBTC": 60_000,
+    "WETH": 4_000,
     "LINK": 20,
-    "YFI": 50_000,
+    "YFI": 35_000,
     "USDT": 1,
     "USDC": 1,
     "DAI": 1,

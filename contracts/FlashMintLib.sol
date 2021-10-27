@@ -198,6 +198,13 @@ library FlashMintLib {
             return _amount;
         }
 
+        if (asset == WETH) {
+            return
+                _amount
+                    .mul(uint256(10)**uint256(IOptionalERC20(dai).decimals()))
+                    .div(_priceOracle().getAssetPrice(dai));
+        }
+
         address[] memory tokens = new address[](2);
         tokens[0] = asset;
         tokens[1] = dai;
@@ -220,6 +227,13 @@ library FlashMintLib {
             _amount == 0 || _amount == type(uint256).max || asset == dai // 1:1 change
         ) {
             return _amount;
+        }
+
+        if (asset == WETH) {
+            return
+                _amount.mul(_priceOracle().getAssetPrice(dai)).div(
+                    uint256(10)**uint256(IOptionalERC20(dai).decimals())
+                );
         }
 
         address[] memory tokens = new address[](2);

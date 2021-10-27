@@ -248,7 +248,7 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
     }
 
     function name() external view override returns (string memory) {
-        return ""; //return "StrategyGenLevAAVE";
+        return "StrategyGenLevAAVE-Flashmint";
     }
 
     function estimatedTotalAssets() public view override returns (uint256) {
@@ -537,8 +537,6 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         }
     }
 
-    event WTF(uint256 a, uint256 b, uint256 c);
-
     function _freeFunds(uint256 amountToFree) internal returns (uint256) {
         if (amountToFree == 0) return 0;
 
@@ -548,8 +546,6 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         uint256 amountRequired = Math.min(amountToFree, realAssets);
         uint256 newSupply = realAssets.sub(amountRequired);
         uint256 newBorrow = getBorrowFromSupply(newSupply, targetCollatRatio);
-
-        //emit WTF(amountRequired, newBorrow, borrows);
 
         // repay required amount
         _leverDownTo(newBorrow, borrows);

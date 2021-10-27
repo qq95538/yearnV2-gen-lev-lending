@@ -134,7 +134,6 @@ library FlashMintLib {
 
         if (isDai) {
             if (deficit) {
-                // 2a. if in deficit withdraw amount and repay it
                 lp.deposit(
                     dai,
                     amountFlashmint.sub(amount),

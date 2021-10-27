@@ -79,6 +79,7 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
 
     uint8 public maxIterations = 6;
     bool public isFlashMintActive = true;
+    bool public withdrawCheck = false;
 
     uint256 public minWant = 100;
     uint256 public minRatio = 0.005 ether;
@@ -125,6 +126,7 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         // initialize operational state
         maxIterations = 6;
         isFlashMintActive = true;
+        withdrawCheck = false;
 
         // mins
         minWant = 100;
@@ -418,9 +420,16 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         uint256 freeAssets = balanceOfWant();
         if (_amountNeeded > freeAssets) {
             _liquidatedAmount = freeAssets;
-            _loss = _amountNeeded.sub(freeAssets);
+            uint256 diff = _amountNeeded.sub(_liquidatedAmount);
+            if (diff <= minWant) {
+                _loss = diff;
+            }
         } else {
             _liquidatedAmount = _amountNeeded;
+        }
+
+        if (withdrawCheck) {
+            require(_amountNeeded == _liquidatedAmount.add(_loss)); // dev: withdraw safety check
         }
     }
 

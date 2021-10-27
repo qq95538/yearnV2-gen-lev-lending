@@ -34,7 +34,16 @@ def test_operation(
 
 
 def test_withdraw(
-    chain, token, vault, strategy, flashloans_active, user, strategist, amount, gov, RELATIVE_APPROX
+    chain,
+    token,
+    vault,
+    strategy,
+    flashloans_active,
+    user,
+    strategist,
+    amount,
+    gov,
+    RELATIVE_APPROX,
 ):
     # Deposit to the vault
     user_balance_before = token.balanceOf(user)
@@ -50,15 +59,15 @@ def test_withdraw(
     utils.strategy_status(vault, strategy)
     strategy.harvest({"from": strategist})
     utils.sleep()
-    
+
     # remove this statement
     if not flashloans_active:
         strategy.setCollateralTargets(
             strategy.maxBorrowCollatRatio() - (0.02 * 1e18),
             strategy.maxCollatRatio(),
-            strategy.maxBorrowCollatRatio(), 
-            strategy.daiBorrowCollatRatio(), 
-            {"from": gov}
+            strategy.maxBorrowCollatRatio(),
+            strategy.daiBorrowCollatRatio(),
+            {"from": gov},
         )
 
     # withdrawal
@@ -363,7 +372,9 @@ def test_triggers(chain, gov, vault, strategy, token, amount, user, strategist):
     strategy.tendTrigger(0)
 
 
-def test_tend(chain, gov, vault, strategy, token, amount, user, strategist, RELATIVE_APPROX):
+def test_tend(
+    chain, gov, vault, strategy, token, amount, user, strategist, RELATIVE_APPROX
+):
     # Deposit to the vault and harvest
     actions.user_deposit(user, vault, token, amount)
     chain.sleep(1)
@@ -383,7 +394,9 @@ def test_tend(chain, gov, vault, strategy, token, amount, user, strategist, RELA
     actions.generate_loss(strategy, toLose)
     utils.strategy_status(vault, strategy)
 
-    strategy.setDebtThreshold(toLose * 1.1, {"from": strategist})  # prevent harvestTrigger
+    strategy.setDebtThreshold(
+        toLose * 1.1, {"from": strategist}
+    )  # prevent harvestTrigger
 
     assert strategy.tendTrigger(0)
 

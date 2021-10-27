@@ -43,7 +43,6 @@ def test_large_deleverage_to_zero(
     )
 
 
-
 def test_large_deleverage_to_zero(
     chain, gov, token, vault, strategy, user, strategist, big_amount, RELATIVE_APPROX
 ):

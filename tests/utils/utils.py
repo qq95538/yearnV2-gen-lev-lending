@@ -35,7 +35,6 @@ def strategy_status(vault, strategy):
     print(f"Max Borrow LTV Ratio {strategy.maxBorrowCollatRatio()/1e18:.4f}")
 
 
-
 def to_units(token, amount):
     return amount / (10 ** token.decimals())
 

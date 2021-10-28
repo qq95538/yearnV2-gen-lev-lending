@@ -77,26 +77,26 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
     uint256 public maxCollatRatio; // Closest to liquidation we'll risk
     uint256 public daiBorrowCollatRatio; // Used for flashmint
 
-    uint8 public maxIterations = 6;
-    bool public isFlashMintActive = true;
-    bool public withdrawCheck = false;
+    uint8 public maxIterations;
+    bool public isFlashMintActive;
+    bool public withdrawCheck;
 
-    uint256 public minWant = 100;
-    uint256 public minRatio = 0.005 ether;
-    uint256 public minRewardToSell = 1e15;
+    uint256 public minWant;
+    uint256 public minRatio;
+    uint256 public minRewardToSell;
 
     enum SwapRouter {UniV2, SushiV2, UniV3}
     SwapRouter public swapRouter = SwapRouter.UniV2; // only applied to aave => want, stkAave => aave always uses v3
 
-    bool public sellStkAave = true;
-    bool public cooldownStkAave = false;
-    uint256 public maxStkAavePriceImpactBps = 500;
+    bool public sellStkAave;
+    bool public cooldownStkAave;
+    uint256 public maxStkAavePriceImpactBps;
 
-    uint24 public stkAaveToAaveSwapFee = 3000;
-    uint24 public aaveToWethSwapFee = 3000;
-    uint24 public wethToWantSwapFee = 3000;
+    uint24 public stkAaveToAaveSwapFee;
+    uint24 public aaveToWethSwapFee;
+    uint24 public wethToWantSwapFee;
 
-    bool private alreadyAdjusted = false; // Signal whether a position adjust was done in prepareReturn
+    bool private alreadyAdjusted; // Signal whether a position adjust was done in prepareReturn
 
     uint16 private constant referral = 7; // Yearn's aave referral code
 
@@ -142,6 +142,8 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         stkAaveToAaveSwapFee = 3000;
         aaveToWethSwapFee = 3000;
         wethToWantSwapFee = 3000;
+
+        alreadyAdjusted = false;
 
         // Set aave tokens
         (address _aToken, , address _debtToken) =

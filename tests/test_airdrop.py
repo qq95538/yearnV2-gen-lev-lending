@@ -36,7 +36,7 @@ def test_airdrop(
     before_pps = vault.pricePerShare()
     # Harvest 2: Realize profit
     chain.sleep(1)
-    strategy.harvest()
+    strategy.harvest({"from": strategist})
     chain.sleep(3600 * 6)  # 6 hrs needed for profits to unlock
     chain.mine(1)
     profit = token.balanceOf(vault.address)  # Profits go to vault

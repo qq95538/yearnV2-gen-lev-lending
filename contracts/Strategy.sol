@@ -6,9 +6,7 @@ pragma solidity 0.6.12;
 pragma experimental ABIEncoderV2;
 
 // These are the core Yearn libraries
-import {
-    BaseStrategyInitializable
-} from "@yearn/yearn-vaults/contracts/BaseStrategy.sol";
+import {BaseStrategy} from "@yearn/yearn-vaults/contracts/BaseStrategy.sol";
 
 import {
     SafeERC20,
@@ -29,10 +27,9 @@ import "../interfaces/aave/IAToken.sol";
 import "../interfaces/aave/IVariableDebtToken.sol";
 import "../interfaces/aave/ILendingPool.sol";
 
-import "./FlashLoanLib.sol";
-import "../interfaces/dydx/ICallee.sol";
+import "./FlashMintLib.sol";
 
-contract Strategy is BaseStrategyInitializable, ICallee {
+contract Strategy is BaseStrategy, IERC3156FlashBorrower {
     using SafeERC20 for IERC20;
     using Address for address;
     using SafeMath for uint256;
@@ -50,6 +47,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     IStakedAave private constant stkAave =
         IStakedAave(0x4da27a545c0c5B758a6BA100e3a049001de870f5);
     address private constant weth = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    address private constant dai = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
 
     // Supply and borrow tokens
     IAToken public aToken;
@@ -77,26 +75,28 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     uint256 public maxBorrowCollatRatio; // The maximum the aave protocol will let us borrow
     uint256 public targetCollatRatio; // The LTV we are levering up to
     uint256 public maxCollatRatio; // Closest to liquidation we'll risk
+    uint256 public daiBorrowCollatRatio; // Used for flashmint
 
-    uint8 public maxIterations = 6;
-    bool public isDyDxActive = true;
+    uint8 public maxIterations;
+    bool public isFlashMintActive;
+    bool public withdrawCheck;
 
-    uint256 public minWant = 100;
-    uint256 public minRatio = 0.005 ether;
-    uint256 public minRewardToSell = 1e15;
+    uint256 public minWant;
+    uint256 public minRatio;
+    uint256 public minRewardToSell;
 
     enum SwapRouter {UniV2, SushiV2, UniV3}
     SwapRouter public swapRouter = SwapRouter.UniV2; // only applied to aave => want, stkAave => aave always uses v3
 
-    bool public sellStkAave = true;
-    bool public cooldownStkAave = false;
-    uint256 public maxStkAavePriceImpactBps = 1000;
+    bool public sellStkAave;
+    bool public cooldownStkAave;
+    uint256 public maxStkAavePriceImpactBps;
 
-    uint24 public stkAaveToAaveSwapFee = 10000;
-    uint24 public aaveToWethSwapFee = 3000;
-    uint24 public wethToWantSwapFee = 3000;
+    uint24 public stkAaveToAaveSwapFee;
+    uint24 public aaveToWethSwapFee;
+    uint24 public wethToWantSwapFee;
 
-    bool private alreadyAdjusted = false; // Signal whether a position adjust was done in prepareReturn
+    bool private alreadyAdjusted; // Signal whether a position adjust was done in prepareReturn
 
     uint16 private constant referral = 7; // Yearn's aave referral code
 
@@ -106,7 +106,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     uint256 private constant PESSIMISM_FACTOR = 1000;
     uint256 private DECIMALS;
 
-    constructor(address _vault) public BaseStrategyInitializable(_vault) {
+    constructor(address _vault) public BaseStrategy(_vault) {
         _initializeThis();
     }
 
@@ -115,7 +115,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         address _strategist,
         address _rewards,
         address _keeper
-    ) external override {
+    ) external {
         _initialize(_vault, _strategist, _rewards, _keeper);
         _initializeThis();
     }
@@ -125,7 +125,8 @@ contract Strategy is BaseStrategyInitializable, ICallee {
 
         // initialize operational state
         maxIterations = 6;
-        isDyDxActive = true;
+        isFlashMintActive = true;
+        withdrawCheck = false;
 
         // mins
         minWant = 100;
@@ -136,11 +137,13 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         swapRouter = SwapRouter.UniV2;
         sellStkAave = true;
         cooldownStkAave = false;
-        maxStkAavePriceImpactBps = 1000;
+        maxStkAavePriceImpactBps = 500;
 
-        stkAaveToAaveSwapFee = 10000;
+        stkAaveToAaveSwapFee = 3000;
         aaveToWethSwapFee = 3000;
         wethToWantSwapFee = 3000;
+
+        alreadyAdjusted = false;
 
         // Set aave tokens
         (address _aToken, , address _debtToken) =
@@ -149,12 +152,15 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         debtToken = IVariableDebtToken(_debtToken);
 
         // Let collateral targets
-        (uint256 ltv, uint256 liquidationThreshold) = getProtocolCollatRatios();
+        (uint256 ltv, uint256 liquidationThreshold) =
+            getProtocolCollatRatios(address(want));
         targetCollatRatio = liquidationThreshold.sub(
             DEFAULT_COLLAT_TARGET_MARGIN
         );
         maxCollatRatio = liquidationThreshold.sub(DEFAULT_COLLAT_MAX_MARGIN);
         maxBorrowCollatRatio = ltv.sub(DEFAULT_COLLAT_MAX_MARGIN);
+        (uint256 daiLtv, ) = getProtocolCollatRatios(dai);
+        daiBorrowCollatRatio = daiLtv.sub(DEFAULT_COLLAT_MAX_MARGIN);
 
         DECIMALS = 10**vault.decimals();
 
@@ -163,8 +169,11 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         approveMaxSpend(address(aToken), address(lendingPool));
 
         // approve flashloan spend
-        approveMaxSpend(weth, address(lendingPool));
-        approveMaxSpend(weth, FlashLoanLib.SOLO);
+        address _dai = dai;
+        if (address(want) != _dai) {
+            approveMaxSpend(_dai, address(lendingPool));
+        }
+        approveMaxSpend(_dai, FlashMintLib.LENDER);
 
         // approve swap router spend
         approveMaxSpend(address(stkAave), address(UNI_V3_ROUTER));
@@ -177,22 +186,33 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     function setCollateralTargets(
         uint256 _targetCollatRatio,
         uint256 _maxCollatRatio,
-        uint256 _maxBorrowCollatRatio
+        uint256 _maxBorrowCollatRatio,
+        uint256 _daiBorrowCollatRatio
     ) external onlyVaultManagers {
-        (uint256 ltv, uint256 liquidationThreshold) = getProtocolCollatRatios();
-
+        (uint256 ltv, uint256 liquidationThreshold) =
+            getProtocolCollatRatios(address(want));
+        (uint256 daiLtv, ) = getProtocolCollatRatios(dai);
         require(_targetCollatRatio < liquidationThreshold);
         require(_maxCollatRatio < liquidationThreshold);
         require(_targetCollatRatio < _maxCollatRatio);
         require(_maxBorrowCollatRatio < ltv);
+        require(_daiBorrowCollatRatio < daiLtv);
 
         targetCollatRatio = _targetCollatRatio;
         maxCollatRatio = _maxCollatRatio;
         maxBorrowCollatRatio = _maxBorrowCollatRatio;
+        daiBorrowCollatRatio = _daiBorrowCollatRatio;
     }
 
-    function setIsDyDxActive(bool _isDyDxActive) external onlyVaultManagers {
-        isDyDxActive = _isDyDxActive;
+    function setIsFlashMintActive(bool _isFlashMintActive)
+        external
+        onlyVaultManagers
+    {
+        isFlashMintActive = _isFlashMintActive;
+    }
+
+    function setWithdrawCheck(bool _withdrawCheck) external onlyVaultManagers {
+        withdrawCheck = _withdrawCheck;
     }
 
     function setMinsAndMaxs(
@@ -234,7 +254,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
     }
 
     function name() external view override returns (string memory) {
-        return "StrategyGenLevAAVE";
+        return "StrategyGenLevAAVE-Flashmint";
     }
 
     function estimatedTotalAssets() public view override returns (uint256) {
@@ -406,9 +426,16 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         uint256 freeAssets = balanceOfWant();
         if (_amountNeeded > freeAssets) {
             _liquidatedAmount = freeAssets;
-            _loss = _amountNeeded.sub(freeAssets);
+            uint256 diff = _amountNeeded.sub(_liquidatedAmount);
+            if (diff <= minWant) {
+                _loss = diff;
+            }
         } else {
             _liquidatedAmount = _amountNeeded;
+        }
+
+        if (withdrawCheck) {
+            require(_amountNeeded == _liquidatedAmount.add(_loss)); // dev: withdraw safety check
         }
     }
 
@@ -418,7 +445,8 @@ contract Strategy is BaseStrategyInitializable, ICallee {
             return false;
         }
         // pull the liquidation liquidationThreshold from aave to be extra safu
-        (, uint256 liquidationThreshold) = getProtocolCollatRatios();
+        (, uint256 liquidationThreshold) =
+            getProtocolCollatRatios(address(want));
 
         uint256 currentCollatRatio = getCurrentCollatRatio();
 
@@ -539,7 +567,7 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         uint256 newBorrow = getBorrowFromSupply(realSupply, targetCollatRatio);
         uint256 totalAmountToBorrow = newBorrow.sub(borrows);
 
-        if (isDyDxActive) {
+        if (isFlashMintActive) {
             // The best approach is to lever up using regular method, then finish with flash loan
             totalAmountToBorrow = totalAmountToBorrow.sub(
                 _leverUpStep(totalAmountToBorrow)
@@ -572,11 +600,12 @@ contract Strategy is BaseStrategyInitializable, ICallee {
             depositsDeficitToMeetLtv = depositsToMeetLtv.sub(deposits);
         }
         return
-            FlashLoanLib.doDyDxFlashLoan(
+            FlashMintLib.doFlashMint(
                 false,
                 amount,
-                depositsDeficitToMeetLtv,
-                address(want)
+                address(want),
+                daiBorrowCollatRatio,
+                depositsDeficitToMeetLtv
             );
     }
 
@@ -615,47 +644,46 @@ contract Strategy is BaseStrategyInitializable, ICallee {
 
     function _leverDownTo(uint256 newAmountBorrowed, uint256 currentBorrowed)
         internal
-        returns (uint256)
     {
-        if (newAmountBorrowed >= currentBorrowed) {
-            // we don't need to repay
-            return 0;
-        }
+        if (currentBorrowed > newAmountBorrowed) {
+            uint256 totalRepayAmount = currentBorrowed.sub(newAmountBorrowed);
 
-        uint256 totalRepayAmount = currentBorrowed.sub(newAmountBorrowed);
-
-        if (isDyDxActive) {
-            totalRepayAmount = totalRepayAmount.sub(
-                _leverDownFlashLoan(totalRepayAmount)
-            );
-            _withdrawExcessCollateral();
-        }
-
-        for (
-            uint8 i = 0;
-            i < maxIterations && totalRepayAmount > minWant;
-            i++
-        ) {
-            uint256 toRepay = totalRepayAmount;
-            uint256 wantBalance = balanceOfWant();
-            if (toRepay > wantBalance) {
-                toRepay = wantBalance;
+            if (isFlashMintActive) {
+                totalRepayAmount = totalRepayAmount.sub(
+                    _leverDownFlashLoan(totalRepayAmount)
+                );
             }
-            uint256 repaid = _repayWant(toRepay);
-            totalRepayAmount = totalRepayAmount.sub(repaid);
-            // withdraw collateral
-            _withdrawExcessCollateral();
+
+            uint256 _maxCollatRatio = maxCollatRatio;
+
+            for (
+                uint8 i = 0;
+                i < maxIterations && totalRepayAmount > minWant;
+                i++
+            ) {
+                _withdrawExcessCollateral(_maxCollatRatio);
+                uint256 toRepay = totalRepayAmount;
+                uint256 wantBalance = balanceOfWant();
+                if (toRepay > wantBalance) {
+                    toRepay = wantBalance;
+                }
+                uint256 repaid = _repayWant(toRepay);
+                totalRepayAmount = totalRepayAmount.sub(repaid);
+            }
         }
 
         // deposit back to get targetCollatRatio (we always need to leave this in this ratio)
         (uint256 deposits, uint256 borrows) = getCurrentPosition();
+        uint256 _targetCollatRatio = targetCollatRatio;
         uint256 targetDeposit =
-            getDepositFromBorrow(borrows, targetCollatRatio);
+            getDepositFromBorrow(borrows, _targetCollatRatio);
         if (targetDeposit > deposits) {
             uint256 toDeposit = targetDeposit.sub(deposits);
             if (toDeposit > minWant) {
                 _depositCollateral(Math.min(toDeposit, balanceOfWant()));
             }
+        } else {
+            _withdrawExcessCollateral(_targetCollatRatio);
         }
     }
 
@@ -665,12 +693,22 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         if (amount > borrows) {
             amount = borrows;
         }
-        return FlashLoanLib.doDyDxFlashLoan(true, amount, 0, address(want));
+        return
+            FlashMintLib.doFlashMint(
+                true,
+                amount,
+                address(want),
+                daiBorrowCollatRatio,
+                0
+            );
     }
 
-    function _withdrawExcessCollateral() internal returns (uint256 amount) {
+    function _withdrawExcessCollateral(uint256 collatRatio)
+        internal
+        returns (uint256 amount)
+    {
         (uint256 deposits, uint256 borrows) = getCurrentPosition();
-        uint256 theoDeposits = getDepositFromBorrow(borrows, maxCollatRatio);
+        uint256 theoDeposits = getDepositFromBorrow(borrows, collatRatio);
         if (deposits > theoDeposits) {
             uint256 toWithdraw = deposits.sub(theoDeposits);
             return _withdrawCollateral(toWithdraw);
@@ -721,17 +759,19 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         return IERC20(address(stkAave)).balanceOf(address(this));
     }
 
-    // Flashloan callback function
-    function callFunction(
-        address sender,
-        Account.Info memory account,
-        bytes memory data
-    ) public override {
-        (bool deficit, uint256 amount) = abi.decode(data, (bool, uint256));
-        require(msg.sender == FlashLoanLib.SOLO);
-        require(sender == address(this));
+    function onFlashLoan(
+        address initiator,
+        address token,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata data
+    ) external override returns (bytes32) {
+        require(msg.sender == FlashMintLib.LENDER);
+        require(initiator == address(this));
+        (bool deficit, uint256 amountWant) = abi.decode(data, (bool, uint256));
 
-        FlashLoanLib.loanLogic(deficit, amount, address(want));
+        return
+            FlashMintLib.loanLogic(deficit, amountWant, amount, address(want));
     }
 
     function getCurrentPosition()
@@ -907,13 +947,13 @@ contract Strategy is BaseStrategyInitializable, ICallee {
         assets[1] = address(debtToken);
     }
 
-    function getProtocolCollatRatios()
+    function getProtocolCollatRatios(address token)
         internal
         view
         returns (uint256 ltv, uint256 liquidationThreshold)
     {
         (, ltv, liquidationThreshold, , , , , , , ) = protocolDataProvider
-            .getReserveConfigurationData(address(want));
+            .getReserveConfigurationData(token);
         // convert bps to wad
         ltv = ltv.mul(BPS_WAD_RATIO);
         liquidationThreshold = liquidationThreshold.mul(BPS_WAD_RATIO);

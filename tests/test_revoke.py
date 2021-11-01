@@ -1,5 +1,5 @@
 import pytest
-from utils import actions, checks
+from utils import actions, checks, utils
 
 
 def test_revoke_strategy_from_vault(
@@ -7,7 +7,7 @@ def test_revoke_strategy_from_vault(
 ):
     # Deposit to the vault and harvest
     actions.user_deposit(user, vault, token, amount)
-    chain.sleep(1)
+    utils.sleep(1)
     strategy.harvest({"from": gov})
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
@@ -22,7 +22,7 @@ def test_revoke_strategy_from_strategy(
 ):
     # Deposit to the vault and harvest
     actions.user_deposit(user, vault, token, amount)
-    chain.sleep(1)
+    utils.sleep(1)
     strategy.harvest({"from": gov})
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
@@ -36,7 +36,7 @@ def test_revoke_with_profit(
     chain, token, token_whale, vault, strategy, amount, user, gov, RELATIVE_APPROX
 ):
     actions.user_deposit(user, vault, token, amount)
-    chain.sleep(1)
+    utils.sleep(1)
     strategy.harvest({"from": gov})
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 

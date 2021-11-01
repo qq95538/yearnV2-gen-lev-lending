@@ -33,7 +33,7 @@ def test_clone(
     assert strategy.estimatedTotalAssets() < strategy.minWant()
 
     # take funds to new strategy
-    vault.addStrategy(cloned_strategy, 10_000, 0, 2 ** 256 - 1, 1_000, {"from": gov})
+    vault.addStrategy(cloned_strategy, 10_000, 2 ** 256 - 1, 1_000, {"from": gov})
     weth.transfer(
         cloned_strategy, 1e6, {"from": "0xba12222222228d8ba445958a75a0704d566bf2c8"}
     )

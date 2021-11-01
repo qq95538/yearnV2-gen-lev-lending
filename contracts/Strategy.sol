@@ -6,7 +6,10 @@ pragma solidity 0.6.12;
 pragma experimental ABIEncoderV2;
 
 // These are the core Yearn libraries
-import {BaseStrategy} from "@yearn/yearn-vaults/contracts/BaseStrategy.sol";
+import {
+    BaseStrategy,
+    VaultAPI
+} from "@yearn/yearn-vaults/contracts/BaseStrategy.sol";
 
 import {
     SafeERC20,
@@ -28,6 +31,18 @@ import "../interfaces/aave/IVariableDebtToken.sol";
 import "../interfaces/aave/ILendingPool.sol";
 
 import "./FlashMintLib.sol";
+
+interface IERC20Meta {
+    function name() external view returns (string memory);
+
+    function symbol() external view returns (string memory);
+
+    function decimals() external view returns (uint256);
+}
+
+interface VaultAPIWithManagement is VaultAPI {
+    function management() external view returns (address);
+}
 
 contract Strategy is BaseStrategy, IERC3156FlashBorrower {
     using SafeERC20 for IERC20;
@@ -79,7 +94,6 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
 
     uint8 public maxIterations;
     bool public isFlashMintActive;
-    bool public withdrawCheck;
 
     uint256 public minWant;
     uint256 public minRatio;
@@ -123,10 +137,11 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
     function _initializeThis() internal {
         require(address(aToken) == address(0));
 
+        healthCheck = address(0xDDCea799fF1699e98EDF118e0629A974Df7DF012);
+
         // initialize operational state
         maxIterations = 6;
         isFlashMintActive = true;
-        withdrawCheck = false;
 
         // mins
         minWant = 100;
@@ -162,7 +177,7 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         (uint256 daiLtv, ) = getProtocolCollatRatios(dai);
         daiBorrowCollatRatio = daiLtv.sub(DEFAULT_COLLAT_MAX_MARGIN);
 
-        DECIMALS = 10**vault.decimals();
+        DECIMALS = 10**IERC20Meta(address(want)).decimals();
 
         // approve spend aave spend
         approveMaxSpend(address(want), address(lendingPool));
@@ -180,6 +195,12 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         approveMaxSpend(aave, address(UNI_V2_ROUTER));
         approveMaxSpend(aave, address(SUSHI_V2_ROUTER));
         approveMaxSpend(aave, address(UNI_V3_ROUTER));
+    }
+
+    // modifiers
+    modifier onlyVaultManagers() {
+        require(isVaultManager(msg.sender));
+        _;
     }
 
     // SETTERS
@@ -209,10 +230,6 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         onlyVaultManagers
     {
         isFlashMintActive = _isFlashMintActive;
-    }
-
-    function setWithdrawCheck(bool _withdrawCheck) external onlyVaultManagers {
-        withdrawCheck = _withdrawCheck;
     }
 
     function setMinsAndMaxs(
@@ -433,10 +450,6 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         } else {
             _liquidatedAmount = _amountNeeded;
         }
-
-        if (withdrawCheck) {
-            require(_amountNeeded == _liquidatedAmount.add(_loss)); // dev: withdraw safety check
-        }
     }
 
     function tendTrigger(uint256 gasCost) public view override returns (bool) {
@@ -456,14 +469,6 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
 
         return (liquidationThreshold.sub(currentCollatRatio) <=
             LIQUIDATION_WARNING_THRESHOLD);
-    }
-
-    function liquidateAllPositions()
-        internal
-        override
-        returns (uint256 _amountFreed)
-    {
-        (_amountFreed, ) = liquidatePosition(type(uint256).max);
     }
 
     function prepareMigration(address _newStrategy) internal override {
@@ -824,15 +829,6 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         return amounts[amounts.length - 1];
     }
 
-    function ethToWant(uint256 _amtInWei)
-        public
-        view
-        override
-        returns (uint256)
-    {
-        return tokenToWant(weth, _amtInWei);
-    }
-
     function _checkCooldown() internal view returns (CooldownStatus) {
         uint256 cooldownStartTimestamp =
             IStakedAave(stkAave).stakersCooldowns(address(this));
@@ -988,5 +984,11 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
 
     function approveMaxSpend(address token, address spender) internal {
         IERC20(token).safeApprove(spender, type(uint256).max);
+    }
+
+    function isVaultManager(address addr) internal view returns (bool) {
+        return
+            addr == governance() ||
+            addr == VaultAPIWithManagement(address(vault)).management();
     }
 }

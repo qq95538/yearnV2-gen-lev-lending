@@ -66,13 +66,13 @@ token_addresses = {
 # TODO: uncomment those tokens you want to test as want
 @pytest.fixture(
     params=[
-        #"WBTC",  # WBTC
-        #"YFI",  # YFI
-        "WETH",  # WETH
-        # 'LINK', # LINK
-        # 'USDT', # USDT
-        #"DAI",  # DAI
-        # "USDC",  # USDC
+        # "WBTC",  # WBTC
+        # "YFI",   # YFI
+        # "WETH",  # WETH
+        # 'LINK',  # LINK
+        # 'USDT',  # USDT
+        # "DAI",   # DAI
+        "USDC",  # USDC
     ],
     scope="session",
     autouse=True,
@@ -87,7 +87,7 @@ whale_addresses = {
     "LINK": "0x28c6c06298d514db089934071355e5743bf21d60",
     "YFI": "0x28c6c06298d514db089934071355e5743bf21d60",
     "USDT": "0x47ac0Fb4F2D84898e4D9E7b4DaB3C24507a6D503",
-    "USDC": "0x47ac0Fb4F2D84898e4D9E7b4DaB3C24507a6D503",
+    "USDC": "0x0A59649758aa4d66E25f08Dd01271e891fe52199",
     "DAI": "0x47ac0Fb4F2D84898e4D9E7b4DaB3C24507a6D503",
 }
 
@@ -148,10 +148,10 @@ def weth_amount(user, weth):
 
 
 @pytest.fixture(scope="function", autouse=True)
-def vault(pm, gov, rewards, guardian, management, token):
+def vault(pm, gov, management, rewards, guardian, token):
     Vault = pm(config["dependencies"][0]).Vault
     vault = guardian.deploy(Vault)
-    vault.initialize(token, gov, rewards, "", "", guardian, management)
+    vault.initialize(token, gov, rewards, "", "")
     vault.setDepositLimit(2 ** 256 - 1, {"from": gov})
     vault.setManagement(management, {"from": gov})
     vault.setManagementFee(0, {"from": gov})
@@ -177,7 +177,7 @@ def factory(strategist, vault, LevAaveFactory):
 def strategy(chain, keeper, vault, factory, gov, strategist, Strategy):
     strategy = Strategy.at(factory.original())
     strategy.setKeeper(keeper, {"from": strategist})
-    vault.addStrategy(strategy, 10_000, 0, 2 ** 256 - 1, 1_000, {"from": gov})
+    vault.addStrategy(strategy, 10_000, 2 ** 256 - 1, 1_000, {"from": gov})
     chain.sleep(1)
     chain.mine()
     yield strategy

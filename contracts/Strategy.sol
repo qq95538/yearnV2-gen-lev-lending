@@ -199,7 +199,7 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
 
     // modifiers
     modifier onlyVaultManagers() {
-        require(isVaultManager(msg.sender));
+        isVaultManager(msg.sender);
         _;
     }
 
@@ -986,9 +986,10 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         IERC20(token).safeApprove(spender, type(uint256).max);
     }
 
-    function isVaultManager(address addr) internal view returns (bool) {
-        return
+    function isVaultManager(address addr) internal view {
+        require(
             addr == governance() ||
-            addr == VaultAPIWithManagement(address(vault)).management();
+                addr == VaultAPIWithManagement(address(vault)).management()
+        ); // dev: require vault manager
     }
 }

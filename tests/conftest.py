@@ -1,5 +1,5 @@
 import pytest
-from brownie import config, Contract, network
+from brownie import config, Contract, ZERO_ADDRESS
 
 # Function scoped isolation fixture to enable xdist.
 # Snapshots the chain before each test and reverts after test completion.
@@ -124,7 +124,7 @@ def amount(token, token_whale, user):
 @pytest.fixture(scope="function")
 def big_amount(token, token_whale, user):
     # this will get the number of tokens (around $49m worth of token)
-    fifty_minus_one_million = round(49_000_000 / token_prices[token.symbol()])
+    fifty_minus_one_million = round(24_000_000 / token_prices[token.symbol()])
     amount = fifty_minus_one_million * 10 ** token.decimals()
     # In order to get some funds for the token you are about to use,
     # it impersonate a whale address
@@ -177,6 +177,7 @@ def factory(strategist, vault, LevAaveFactory):
 def strategy(chain, keeper, vault, factory, gov, strategist, Strategy):
     strategy = Strategy.at(factory.original())
     strategy.setKeeper(keeper, {"from": strategist})
+    strategy.setHealthCheck(ZERO_ADDRESS, {"from": gov})
     vault.addStrategy(strategy, 10_000, 2 ** 256 - 1, 1_000, {"from": gov})
     chain.sleep(1)
     chain.mine()

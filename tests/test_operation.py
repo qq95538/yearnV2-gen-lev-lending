@@ -23,13 +23,14 @@ def test_operation(
 
     utils.strategy_status(vault, strategy)
 
-    utils.sleep(3 * 24 * 3600)
+    utils.sleep(3600)
     strategy.harvest({"from": strategist})
 
     # withdrawal
     vault.withdraw({"from": user})
     assert (
         pytest.approx(token.balanceOf(user), rel=RELATIVE_APPROX) == user_balance_before
+        or token.balanceOf(user) >= user_balance_before
     )
 
 
@@ -75,13 +76,17 @@ def test_withdraw(
         print(i)
         utils.strategy_status(vault, strategy)
         vault.withdraw(int(amount / 10), user, 10_000, {"from": user})
-        #assert token.balanceOf(user) >= user_balance_before * i / 10
+        # assert token.balanceOf(user) >= user_balance_before * i / 10
 
     utils.sleep(1)
     strategy.harvest({"from": strategist})
     utils.sleep()
     vault.withdraw(vault.balanceOf(user), {"from": user})
-    assert token.balanceOf(user) > user_balance_before
+    assert (
+        token.balanceOf(user)
+        + (vault.balanceOf(user) * vault.pricePerShare() / 10 ** vault.decimals())
+        > user_balance_before
+    )
     utils.strategy_status(vault, strategy)
 
 
@@ -358,8 +363,8 @@ def test_sweep(gov, vault, strategy, token, user, amount, weth, weth_amount):
     with brownie.reverts("!shares"):
         strategy.sweep(vault.address, {"from": gov})
 
-    if (token.address == weth.address):
-        return # skip if with
+    if token.address == weth.address:
+        return  # skip if with
 
     before_balance = weth.balanceOf(gov) + weth.balanceOf(
         strategy

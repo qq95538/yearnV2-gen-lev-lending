@@ -124,8 +124,8 @@ def amount(token, token_whale, user):
 @pytest.fixture(scope="function")
 def big_amount(token, token_whale, user):
     # this will get the number of tokens (around $49m worth of token)
-    fifty_minus_one_million = round(24_000_000 / token_prices[token.symbol()])
-    amount = fifty_minus_one_million * 10 ** token.decimals()
+    twenty_five_minus_one_million = round(24_000_000 / token_prices[token.symbol()])
+    amount = twenty_five_minus_one_million * 10 ** token.decimals()
     # In order to get some funds for the token you are about to use,
     # it impersonate a whale address
     if amount > token.balanceOf(token_whale):

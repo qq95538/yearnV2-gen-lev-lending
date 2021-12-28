@@ -8,12 +8,7 @@ pragma experimental ABIEncoderV2;
 // These are the core Yearn libraries
 import {BaseStrategy} from "@yearn/yearn-vaults/contracts/BaseStrategy.sol";
 
-import {
-    SafeERC20,
-    SafeMath,
-    IERC20,
-    Address
-} from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
+import {SafeERC20, SafeMath, IERC20, Address} from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 
 import "@openzeppelin/contracts/math/Math.sol";
 
@@ -27,9 +22,7 @@ import "../interfaces/aave/IAToken.sol";
 import "../interfaces/aave/IVariableDebtToken.sol";
 import "../interfaces/aave/ILendingPool.sol";
 
-import "./FlashMintLib.sol";
-
-contract Strategy is BaseStrategy, IERC3156FlashBorrower {
+contract Strategy is BaseStrategy {
     using SafeERC20 for IERC20;
     using Address for address;
     using SafeMath for uint256;
@@ -57,7 +50,11 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
     // 0 = no cooldown or past withdraw period
     // 1 = claim period
     // 2 = cooldown initiated, future claim period
-    enum CooldownStatus {None, Claim, Initiated}
+    enum CooldownStatus {
+        None,
+        Claim,
+        Initiated
+    }
 
     // SWAP routers
     IUni private constant UNI_V2_ROUTER =
@@ -75,17 +72,19 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
     uint256 public maxBorrowCollatRatio; // The maximum the aave protocol will let us borrow
     uint256 public targetCollatRatio; // The LTV we are levering up to
     uint256 public maxCollatRatio; // Closest to liquidation we'll risk
-    uint256 public daiBorrowCollatRatio; // Used for flashmint
 
     uint8 public maxIterations;
-    bool public isFlashMintActive;
     bool public withdrawCheck;
 
     uint256 public minWant;
     uint256 public minRatio;
     uint256 public minRewardToSell;
 
-    enum SwapRouter {UniV2, SushiV2, UniV3}
+    enum SwapRouter {
+        UniV2,
+        SushiV2,
+        UniV3
+    }
     SwapRouter public swapRouter = SwapRouter.UniV2; // only applied to aave => want, stkAave => aave always uses v3
 
     bool public sellStkAave;
@@ -125,7 +124,6 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
 
         // initialize operational state
         maxIterations = 6;
-        isFlashMintActive = true;
         withdrawCheck = false;
 
         // mins
@@ -146,34 +144,26 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         alreadyAdjusted = false;
 
         // Set aave tokens
-        (address _aToken, , address _debtToken) =
-            protocolDataProvider.getReserveTokensAddresses(address(want));
+        (address _aToken, , address _debtToken) = protocolDataProvider
+            .getReserveTokensAddresses(address(want));
         aToken = IAToken(_aToken);
         debtToken = IVariableDebtToken(_debtToken);
 
         // Let collateral targets
-        (uint256 ltv, uint256 liquidationThreshold) =
-            getProtocolCollatRatios(address(want));
+        (uint256 ltv, uint256 liquidationThreshold) = getProtocolCollatRatios(
+            address(want)
+        );
         targetCollatRatio = liquidationThreshold.sub(
             DEFAULT_COLLAT_TARGET_MARGIN
         );
         maxCollatRatio = liquidationThreshold.sub(DEFAULT_COLLAT_MAX_MARGIN);
         maxBorrowCollatRatio = ltv.sub(DEFAULT_COLLAT_MAX_MARGIN);
-        (uint256 daiLtv, ) = getProtocolCollatRatios(dai);
-        daiBorrowCollatRatio = daiLtv.sub(DEFAULT_COLLAT_MAX_MARGIN);
 
         DECIMALS = 10**vault.decimals();
 
         // approve spend aave spend
         approveMaxSpend(address(want), address(lendingPool));
         approveMaxSpend(address(aToken), address(lendingPool));
-
-        // approve flashloan spend
-        address _dai = dai;
-        if (address(want) != _dai) {
-            approveMaxSpend(_dai, address(lendingPool));
-        }
-        approveMaxSpend(_dai, FlashMintLib.LENDER);
 
         // approve swap router spend
         approveMaxSpend(address(stkAave), address(UNI_V3_ROUTER));
@@ -186,29 +176,19 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
     function setCollateralTargets(
         uint256 _targetCollatRatio,
         uint256 _maxCollatRatio,
-        uint256 _maxBorrowCollatRatio,
-        uint256 _daiBorrowCollatRatio
+        uint256 _maxBorrowCollatRatio
     ) external onlyVaultManagers {
-        (uint256 ltv, uint256 liquidationThreshold) =
-            getProtocolCollatRatios(address(want));
-        (uint256 daiLtv, ) = getProtocolCollatRatios(dai);
+        (uint256 ltv, uint256 liquidationThreshold) = getProtocolCollatRatios(
+            address(want)
+        );
         require(_targetCollatRatio < liquidationThreshold);
         require(_maxCollatRatio < liquidationThreshold);
         require(_targetCollatRatio < _maxCollatRatio);
         require(_maxBorrowCollatRatio < ltv);
-        require(_daiBorrowCollatRatio < daiLtv);
 
         targetCollatRatio = _targetCollatRatio;
         maxCollatRatio = _maxCollatRatio;
         maxBorrowCollatRatio = _maxBorrowCollatRatio;
-        daiBorrowCollatRatio = _daiBorrowCollatRatio;
-    }
-
-    function setIsFlashMintActive(bool _isFlashMintActive)
-        external
-        onlyVaultManagers
-    {
-        isFlashMintActive = _isFlashMintActive;
     }
 
     function setWithdrawCheck(bool _withdrawCheck) external onlyVaultManagers {
@@ -254,22 +234,22 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
     }
 
     function name() external view override returns (string memory) {
-        return "StrategyGenLevAAVE-Flashmint";
+        return "StrategyGenLevGeist";
     }
 
     function estimatedTotalAssets() public view override returns (uint256) {
-        uint256 balanceExcludingRewards =
-            balanceOfWant().add(getCurrentSupply());
+        uint256 balanceExcludingRewards = balanceOfWant().add(
+            getCurrentSupply()
+        );
 
         // if we don't have a position, don't worry about rewards
         if (balanceExcludingRewards < minWant) {
             return balanceExcludingRewards;
         }
 
-        uint256 rewards =
-            estimatedRewardsInWant().mul(MAX_BPS.sub(PESSIMISM_FACTOR)).div(
-                MAX_BPS
-            );
+        uint256 rewards = estimatedRewardsInWant()
+            .mul(MAX_BPS.sub(PESSIMISM_FACTOR))
+            .div(MAX_BPS);
         return balanceExcludingRewards.add(rewards);
     }
 
@@ -277,16 +257,15 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         uint256 aaveBalance = balanceOfAave();
         uint256 stkAaveBalance = balanceOfStkAave();
 
-        uint256 pendingRewards =
-            incentivesController.getRewardsBalance(
-                getAaveAssets(),
-                address(this)
-            );
+        uint256 pendingRewards = incentivesController.getRewardsBalance(
+            getAaveAssets(),
+            address(this)
+        );
         uint256 stkAaveDiscountFactor = MAX_BPS.sub(maxStkAavePriceImpactBps);
-        uint256 combinedStkAave =
-            pendingRewards.add(stkAaveBalance).mul(stkAaveDiscountFactor).div(
-                MAX_BPS
-            );
+        uint256 combinedStkAave = pendingRewards
+            .add(stkAaveBalance)
+            .mul(stkAaveDiscountFactor)
+            .div(MAX_BPS);
 
         return tokenToWant(aave, aaveBalance.add(combinedStkAave));
     }
@@ -396,11 +375,10 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         } else if (currentCollatRatio > targetCollatRatio) {
             if (currentCollatRatio.sub(targetCollatRatio) > minRatio) {
                 (uint256 deposits, uint256 borrows) = getCurrentPosition();
-                uint256 newBorrow =
-                    getBorrowFromSupply(
-                        deposits.sub(borrows),
-                        targetCollatRatio
-                    );
+                uint256 newBorrow = getBorrowFromSupply(
+                    deposits.sub(borrows),
+                    targetCollatRatio
+                );
                 _leverDownTo(newBorrow, borrows);
             }
         }
@@ -445,8 +423,9 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
             return false;
         }
         // pull the liquidation liquidationThreshold from aave to be extra safu
-        (, uint256 liquidationThreshold) =
-            getProtocolCollatRatios(address(want));
+        (, uint256 liquidationThreshold) = getProtocolCollatRatios(
+            address(want)
+        );
 
         uint256 currentCollatRatio = getCurrentCollatRatio();
 
@@ -529,10 +508,9 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
 
         // Always keep 1 wei to get around cooldown clear
         if (sellStkAave && stkAaveBalance >= minRewardToSell.add(1)) {
-            uint256 minAAVEOut =
-                stkAaveBalance.mul(MAX_BPS.sub(maxStkAavePriceImpactBps)).div(
-                    MAX_BPS
-                );
+            uint256 minAAVEOut = stkAaveBalance
+                .mul(MAX_BPS.sub(maxStkAavePriceImpactBps))
+                .div(MAX_BPS);
             _sellSTKAAVEToAAVE(stkAaveBalance.sub(1), minAAVEOut);
         }
 
@@ -567,46 +545,15 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         uint256 newBorrow = getBorrowFromSupply(realSupply, targetCollatRatio);
         uint256 totalAmountToBorrow = newBorrow.sub(borrows);
 
-        if (isFlashMintActive) {
-            // The best approach is to lever up using regular method, then finish with flash loan
+        for (
+            uint8 i = 0;
+            i < maxIterations && totalAmountToBorrow > minWant;
+            i++
+        ) {
             totalAmountToBorrow = totalAmountToBorrow.sub(
                 _leverUpStep(totalAmountToBorrow)
             );
-
-            if (totalAmountToBorrow > minWant) {
-                totalAmountToBorrow = totalAmountToBorrow.sub(
-                    _leverUpFlashLoan(totalAmountToBorrow)
-                );
-            }
-        } else {
-            for (
-                uint8 i = 0;
-                i < maxIterations && totalAmountToBorrow > minWant;
-                i++
-            ) {
-                totalAmountToBorrow = totalAmountToBorrow.sub(
-                    _leverUpStep(totalAmountToBorrow)
-                );
-            }
         }
-    }
-
-    function _leverUpFlashLoan(uint256 amount) internal returns (uint256) {
-        (uint256 deposits, uint256 borrows) = getCurrentPosition();
-        uint256 depositsToMeetLtv =
-            getDepositFromBorrow(borrows, maxBorrowCollatRatio);
-        uint256 depositsDeficitToMeetLtv = 0;
-        if (depositsToMeetLtv > deposits) {
-            depositsDeficitToMeetLtv = depositsToMeetLtv.sub(deposits);
-        }
-        return
-            FlashMintLib.doFlashMint(
-                false,
-                amount,
-                address(want),
-                daiBorrowCollatRatio,
-                depositsDeficitToMeetLtv
-            );
     }
 
     function _leverUpStep(uint256 amount) internal returns (uint256) {
@@ -618,11 +565,10 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
 
         // calculate how much borrow can I take
         (uint256 deposits, uint256 borrows) = getCurrentPosition();
-        uint256 canBorrow =
-            getBorrowFromDeposit(
-                deposits.add(wantBalance),
-                maxBorrowCollatRatio
-            );
+        uint256 canBorrow = getBorrowFromDeposit(
+            deposits.add(wantBalance),
+            maxBorrowCollatRatio
+        );
 
         if (canBorrow <= borrows) {
             return 0;
@@ -648,12 +594,6 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         if (currentBorrowed > newAmountBorrowed) {
             uint256 totalRepayAmount = currentBorrowed.sub(newAmountBorrowed);
 
-            if (isFlashMintActive) {
-                totalRepayAmount = totalRepayAmount.sub(
-                    _leverDownFlashLoan(totalRepayAmount)
-                );
-            }
-
             uint256 _maxCollatRatio = maxCollatRatio;
 
             for (
@@ -675,8 +615,10 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         // deposit back to get targetCollatRatio (we always need to leave this in this ratio)
         (uint256 deposits, uint256 borrows) = getCurrentPosition();
         uint256 _targetCollatRatio = targetCollatRatio;
-        uint256 targetDeposit =
-            getDepositFromBorrow(borrows, _targetCollatRatio);
+        uint256 targetDeposit = getDepositFromBorrow(
+            borrows,
+            _targetCollatRatio
+        );
         if (targetDeposit > deposits) {
             uint256 toDeposit = targetDeposit.sub(deposits);
             if (toDeposit > minWant) {
@@ -685,22 +627,6 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         } else {
             _withdrawExcessCollateral(_targetCollatRatio);
         }
-    }
-
-    function _leverDownFlashLoan(uint256 amount) internal returns (uint256) {
-        if (amount <= minWant) return 0;
-        (, uint256 borrows) = getCurrentPosition();
-        if (amount > borrows) {
-            amount = borrows;
-        }
-        return
-            FlashMintLib.doFlashMint(
-                true,
-                amount,
-                address(want),
-                daiBorrowCollatRatio,
-                0
-            );
     }
 
     function _withdrawExcessCollateral(uint256 collatRatio)
@@ -759,21 +685,6 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         return IERC20(address(stkAave)).balanceOf(address(this));
     }
 
-    function onFlashLoan(
-        address initiator,
-        address token,
-        uint256 amount,
-        uint256 fee,
-        bytes calldata data
-    ) external override returns (bytes32) {
-        require(msg.sender == FlashMintLib.LENDER);
-        require(initiator == address(this));
-        (bool deficit, uint256 amountWant) = abi.decode(data, (bool, uint256));
-
-        return
-            FlashMintLib.loanLogic(deficit, amountWant, amount, address(want));
-    }
-
     function getCurrentPosition()
         public
         view
@@ -813,13 +724,13 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         }
 
         // KISS: just use a v2 router for quotes which aren't used in critical logic
-        IUni router =
-            swapRouter == SwapRouter.SushiV2 ? SUSHI_V2_ROUTER : UNI_V2_ROUTER;
-        uint256[] memory amounts =
-            router.getAmountsOut(
-                amount,
-                getTokenOutPathV2(token, address(want))
-            );
+        IUni router = swapRouter == SwapRouter.SushiV2
+            ? SUSHI_V2_ROUTER
+            : UNI_V2_ROUTER;
+        uint256[] memory amounts = router.getAmountsOut(
+            amount,
+            getTokenOutPathV2(token, address(want))
+        );
 
         return amounts[amounts.length - 1];
     }
@@ -834,12 +745,14 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
     }
 
     function _checkCooldown() internal view returns (CooldownStatus) {
-        uint256 cooldownStartTimestamp =
-            IStakedAave(stkAave).stakersCooldowns(address(this));
+        uint256 cooldownStartTimestamp = IStakedAave(stkAave).stakersCooldowns(
+            address(this)
+        );
         uint256 COOLDOWN_SECONDS = IStakedAave(stkAave).COOLDOWN_SECONDS();
         uint256 UNSTAKE_WINDOW = IStakedAave(stkAave).UNSTAKE_WINDOW();
-        uint256 nextClaimStartTimestamp =
-            cooldownStartTimestamp.add(COOLDOWN_SECONDS);
+        uint256 nextClaimStartTimestamp = cooldownStartTimestamp.add(
+            COOLDOWN_SECONDS
+        );
 
         if (cooldownStartTimestamp == 0) {
             return CooldownStatus.None;
@@ -860,8 +773,8 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         pure
         returns (address[] memory _path)
     {
-        bool is_weth =
-            _token_in == address(weth) || _token_out == address(weth);
+        bool is_weth = _token_in == address(weth) ||
+            _token_out == address(weth);
         _path = new address[](is_weth ? 2 : 3);
         _path[0] = _token_in;
 
@@ -910,10 +823,9 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
                 )
             );
         } else {
-            IUni router =
-                swapRouter == SwapRouter.UniV2
-                    ? UNI_V2_ROUTER
-                    : SUSHI_V2_ROUTER;
+            IUni router = swapRouter == SwapRouter.UniV2
+                ? UNI_V2_ROUTER
+                : SUSHI_V2_ROUTER;
             router.swapExactTokensForTokens(
                 amountIn,
                 minOut,

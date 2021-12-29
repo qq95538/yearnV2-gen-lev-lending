@@ -2,7 +2,6 @@
 pragma solidity 0.6.12;
 
 import {IScaledBalanceToken} from "./IScaledBalanceToken.sol";
-import {IAaveIncentivesController} from "./IAaveIncentivesController.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
@@ -66,5 +65,5 @@ interface IVariableDebtToken is IERC20, IScaledBalanceToken {
     function getIncentivesController()
         external
         view
-        returns (IAaveIncentivesController);
+        returns (address);
 }

@@ -13,14 +13,15 @@ import {SafeERC20, SafeMath, IERC20, Address} from "@openzeppelin/contracts/toke
 import "@openzeppelin/contracts/math/Math.sol";
 
 import "../interfaces/uniswap/IUni.sol";
-import {ISwapRouter} from "../interfaces/uniswap/ISwapRouter.sol";
 
 import "../interfaces/aave/IProtocolDataProvider.sol";
-import "../interfaces/aave/IAaveIncentivesController.sol";
 import "../interfaces/aave/IStakedAave.sol";
 import "../interfaces/aave/IAToken.sol";
 import "../interfaces/aave/IVariableDebtToken.sol";
 import "../interfaces/aave/ILendingPool.sol";
+
+import "../interfaces/geist/IGeistIncentivesController.sol";
+import "../interfaces/geist/IMultiFeeDistribution.sol";
 
 contract Strategy is BaseStrategy {
     using SafeERC20 for IERC20;
@@ -29,40 +30,25 @@ contract Strategy is BaseStrategy {
 
     // AAVE protocol address
     IProtocolDataProvider private constant protocolDataProvider =
-        IProtocolDataProvider(0x057835Ad21a177dbdd3090bB1CAE03EaCF78Fc6d);
-    IAaveIncentivesController private constant incentivesController =
-        IAaveIncentivesController(0xd784927Ff2f95ba542BfC824c8a8a98F3495f6b5);
+        IProtocolDataProvider(0xf3B0611e2E4D2cd6aB4bb3e01aDe211c3f42A8C3);
+    IGeistIncentivesController private constant incentivesController =
+        IGeistIncentivesController(0x297FddC5c33Ef988dd03bd13e162aE084ea1fE57);
     ILendingPool private constant lendingPool =
-        ILendingPool(0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9);
+        ILendingPool(0x9FAD24f572045c7869117160A571B2e50b10d068);
 
     // Token addresses
-    address private constant aave = 0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9;
-    IStakedAave private constant stkAave =
-        IStakedAave(0x4da27a545c0c5B758a6BA100e3a049001de870f5);
-    address private constant weth = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
-    address private constant dai = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
+    address private constant geist = 0xd8321AA83Fb0a4ECd6348D4577431310A6E0814d;
+    address private constant weth = 0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83;
 
     // Supply and borrow tokens
     IAToken public aToken;
     IVariableDebtToken public debtToken;
 
-    // represents stkAave cooldown status
-    // 0 = no cooldown or past withdraw period
-    // 1 = claim period
-    // 2 = cooldown initiated, future claim period
-    enum CooldownStatus {
-        None,
-        Claim,
-        Initiated
-    }
-
     // SWAP routers
-    IUni private constant UNI_V2_ROUTER =
-        IUni(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
-    IUni private constant SUSHI_V2_ROUTER =
-        IUni(0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F);
-    ISwapRouter private constant UNI_V3_ROUTER =
-        ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564);
+    IUni private constant SPOOKY_V2_ROUTER =
+        IUni(0xF491e7B69E4244ad4002BC14e878a34207E38c29);
+    IUni private constant SPIRIT_V2_ROUTER =
+        IUni(0x16327E3FbDaCA3bcF7E38F5Af2599D2DDc33aE52);
 
     // OPS State Variables
     uint256 private constant DEFAULT_COLLAT_TARGET_MARGIN = 0.02 ether;
@@ -81,19 +67,10 @@ contract Strategy is BaseStrategy {
     uint256 public minRewardToSell;
 
     enum SwapRouter {
-        UniV2,
-        SushiV2,
-        UniV3
+        Spooky,
+        Spirit
     }
-    SwapRouter public swapRouter = SwapRouter.UniV2; // only applied to aave => want, stkAave => aave always uses v3
-
-    bool public sellStkAave;
-    bool public cooldownStkAave;
-    uint256 public maxStkAavePriceImpactBps;
-
-    uint24 public stkAaveToAaveSwapFee;
-    uint24 public aaveToWethSwapFee;
-    uint24 public wethToWantSwapFee;
+    SwapRouter public swapRouter = SwapRouter.Spooky;
 
     bool private alreadyAdjusted; // Signal whether a position adjust was done in prepareReturn
 
@@ -132,14 +109,7 @@ contract Strategy is BaseStrategy {
         minRewardToSell = 1e15;
 
         // reward params
-        swapRouter = SwapRouter.UniV2;
-        sellStkAave = true;
-        cooldownStkAave = false;
-        maxStkAavePriceImpactBps = 500;
-
-        stkAaveToAaveSwapFee = 3000;
-        aaveToWethSwapFee = 3000;
-        wethToWantSwapFee = 3000;
+        swapRouter = SwapRouter.Spooky;
 
         alreadyAdjusted = false;
 
@@ -166,10 +136,8 @@ contract Strategy is BaseStrategy {
         approveMaxSpend(address(aToken), address(lendingPool));
 
         // approve swap router spend
-        approveMaxSpend(address(stkAave), address(UNI_V3_ROUTER));
-        approveMaxSpend(aave, address(UNI_V2_ROUTER));
-        approveMaxSpend(aave, address(SUSHI_V2_ROUTER));
-        approveMaxSpend(aave, address(UNI_V3_ROUTER));
+        approveMaxSpend(geist, address(SPOOKY_V2_ROUTER));
+        approveMaxSpend(geist, address(SPIRIT_V2_ROUTER));
     }
 
     // SETTERS
@@ -207,30 +175,15 @@ contract Strategy is BaseStrategy {
         maxIterations = _maxIterations;
     }
 
-    function setRewardBehavior(
-        SwapRouter _swapRouter,
-        bool _sellStkAave,
-        bool _cooldownStkAave,
-        uint256 _minRewardToSell,
-        uint256 _maxStkAavePriceImpactBps,
-        uint24 _stkAaveToAaveSwapFee,
-        uint24 _aaveToWethSwapFee,
-        uint24 _wethToWantSwapFee
-    ) external onlyVaultManagers {
+    function setRewardBehavior(SwapRouter _swapRouter, uint256 _minRewardToSell)
+        external
+        onlyVaultManagers
+    {
         require(
-            _swapRouter == SwapRouter.UniV2 ||
-                _swapRouter == SwapRouter.SushiV2 ||
-                _swapRouter == SwapRouter.UniV3
+            _swapRouter == SwapRouter.Spooky || _swapRouter == SwapRouter.Spirit
         );
-        require(_maxStkAavePriceImpactBps <= MAX_BPS);
         swapRouter = _swapRouter;
-        sellStkAave = _sellStkAave;
-        cooldownStkAave = _cooldownStkAave;
         minRewardToSell = _minRewardToSell;
-        maxStkAavePriceImpactBps = _maxStkAavePriceImpactBps;
-        stkAaveToAaveSwapFee = _stkAaveToAaveSwapFee;
-        aaveToWethSwapFee = _aaveToWethSwapFee;
-        wethToWantSwapFee = _wethToWantSwapFee;
     }
 
     function name() external view override returns (string memory) {
@@ -254,20 +207,17 @@ contract Strategy is BaseStrategy {
     }
 
     function estimatedRewardsInWant() public view returns (uint256) {
-        uint256 aaveBalance = balanceOfAave();
-        uint256 stkAaveBalance = balanceOfStkAave();
+        uint256 rewardBalance = 0;
 
-        uint256 pendingRewards = incentivesController.getRewardsBalance(
-            getAaveAssets(),
-            address(this)
-        );
-        uint256 stkAaveDiscountFactor = MAX_BPS.sub(maxStkAavePriceImpactBps);
-        uint256 combinedStkAave = pendingRewards
-            .add(stkAaveBalance)
-            .mul(stkAaveDiscountFactor)
-            .div(MAX_BPS);
+        uint256[] memory rewards = incentivesController.claimableReward(address(this), getAaveAssets());
+        for (uint8 i = 0; i < rewards.length; i++) {
+            rewardBalance += rewards[i];
+        }
 
-        return tokenToWant(aave, aaveBalance.add(combinedStkAave));
+        rewardBalance = rewardBalance.mul(5000).div(MAX_BPS);
+        rewardBalance += balanceOfReward();
+
+        return tokenToWant(geist, rewardBalance);
     }
 
     function prepareReturn(uint256 _debtOutstanding)
@@ -475,49 +425,17 @@ contract Strategy is BaseStrategy {
     // INTERNAL ACTIONS
 
     function _claimAndSellRewards() internal returns (uint256) {
-        uint256 stkAaveBalance = balanceOfStkAave();
-        CooldownStatus cooldownStatus;
-        if (stkAaveBalance > 0) {
-            cooldownStatus = _checkCooldown(); // don't check status if we have no stkAave
-        }
+        IGeistIncentivesController _incentivesController = incentivesController;
 
-        // If it's the claim period claim
-        if (stkAaveBalance > 0 && cooldownStatus == CooldownStatus.Claim) {
-            // redeem AAVE from stkAave
-            stkAave.claimRewards(address(this), type(uint256).max);
-            stkAave.redeem(address(this), stkAaveBalance);
-        }
+        _incentivesController.claim(address(this), getAaveAssets());
 
-        // claim stkAave from lending and borrowing, this will reset the cooldown
-        incentivesController.claimRewards(
-            getAaveAssets(),
-            type(uint256).max,
-            address(this)
-        );
-
-        stkAaveBalance = balanceOfStkAave();
-
-        // request start of cooldown period, if there's no cooldown in progress
-        if (
-            cooldownStkAave &&
-            stkAaveBalance > 0 &&
-            cooldownStatus == CooldownStatus.None
-        ) {
-            stkAave.cooldown();
-        }
-
-        // Always keep 1 wei to get around cooldown clear
-        if (sellStkAave && stkAaveBalance >= minRewardToSell.add(1)) {
-            uint256 minAAVEOut = stkAaveBalance
-                .mul(MAX_BPS.sub(maxStkAavePriceImpactBps))
-                .div(MAX_BPS);
-            _sellSTKAAVEToAAVE(stkAaveBalance.sub(1), minAAVEOut);
-        }
+        // Exit with 50% penalty
+        IMultiFeeDistribution(_incentivesController.rewardMinter()).exit();
 
         // sell AAVE for want
-        uint256 aaveBalance = balanceOfAave();
-        if (aaveBalance >= minRewardToSell) {
-            _sellAAVEForWant(aaveBalance, 0);
+        uint256 rewardBalance = balanceOfReward();
+        if (rewardBalance >= minRewardToSell) {
+            _sellRewardForWant(rewardBalance, 0);
         }
     }
 
@@ -677,12 +595,8 @@ contract Strategy is BaseStrategy {
         return debtToken.balanceOf(address(this));
     }
 
-    function balanceOfAave() internal view returns (uint256) {
-        return IERC20(aave).balanceOf(address(this));
-    }
-
-    function balanceOfStkAave() internal view returns (uint256) {
-        return IERC20(address(stkAave)).balanceOf(address(this));
+    function balanceOfReward() internal view returns (uint256) {
+        return IERC20(geist).balanceOf(address(this));
     }
 
     function getCurrentPosition()
@@ -724,9 +638,9 @@ contract Strategy is BaseStrategy {
         }
 
         // KISS: just use a v2 router for quotes which aren't used in critical logic
-        IUni router = swapRouter == SwapRouter.SushiV2
-            ? SUSHI_V2_ROUTER
-            : UNI_V2_ROUTER;
+        IUni router = swapRouter == SwapRouter.Spooky
+            ? SPOOKY_V2_ROUTER
+            : SPIRIT_V2_ROUTER;
         uint256[] memory amounts = router.getAmountsOut(
             amount,
             getTokenOutPathV2(token, address(want))
@@ -742,30 +656,6 @@ contract Strategy is BaseStrategy {
         returns (uint256)
     {
         return tokenToWant(weth, _amtInWei);
-    }
-
-    function _checkCooldown() internal view returns (CooldownStatus) {
-        uint256 cooldownStartTimestamp = IStakedAave(stkAave).stakersCooldowns(
-            address(this)
-        );
-        uint256 COOLDOWN_SECONDS = IStakedAave(stkAave).COOLDOWN_SECONDS();
-        uint256 UNSTAKE_WINDOW = IStakedAave(stkAave).UNSTAKE_WINDOW();
-        uint256 nextClaimStartTimestamp = cooldownStartTimestamp.add(
-            COOLDOWN_SECONDS
-        );
-
-        if (cooldownStartTimestamp == 0) {
-            return CooldownStatus.None;
-        }
-        if (
-            block.timestamp > nextClaimStartTimestamp &&
-            block.timestamp <= nextClaimStartTimestamp.add(UNSTAKE_WINDOW)
-        ) {
-            return CooldownStatus.Claim;
-        }
-        if (block.timestamp < nextClaimStartTimestamp) {
-            return CooldownStatus.Initiated;
-        }
     }
 
     function getTokenOutPathV2(address _token_in, address _token_out)
@@ -786,70 +676,19 @@ contract Strategy is BaseStrategy {
         }
     }
 
-    function getTokenOutPathV3(address _token_in, address _token_out)
-        internal
-        view
-        returns (bytes memory _path)
-    {
-        if (address(want) == weth) {
-            _path = abi.encodePacked(
-                address(aave),
-                aaveToWethSwapFee,
-                address(weth)
-            );
-        } else {
-            _path = abi.encodePacked(
-                address(aave),
-                aaveToWethSwapFee,
-                address(weth),
-                wethToWantSwapFee,
-                address(want)
-            );
-        }
-    }
-
-    function _sellAAVEForWant(uint256 amountIn, uint256 minOut) internal {
+    function _sellRewardForWant(uint256 amountIn, uint256 minOut) internal {
         if (amountIn == 0) {
             return;
         }
-        if (swapRouter == SwapRouter.UniV3) {
-            UNI_V3_ROUTER.exactInput(
-                ISwapRouter.ExactInputParams(
-                    getTokenOutPathV3(address(aave), address(want)),
-                    address(this),
-                    now,
-                    amountIn,
-                    minOut
-                )
-            );
-        } else {
-            IUni router = swapRouter == SwapRouter.UniV2
-                ? UNI_V2_ROUTER
-                : SUSHI_V2_ROUTER;
-            router.swapExactTokensForTokens(
-                amountIn,
-                minOut,
-                getTokenOutPathV2(address(aave), address(want)),
-                address(this),
-                now
-            );
-        }
-    }
-
-    function _sellSTKAAVEToAAVE(uint256 amountIn, uint256 minOut) internal {
-        // Swap Rewards in UNIV3
-        // NOTE: Unoptimized, can be frontrun and most importantly this pool is low liquidity
-        UNI_V3_ROUTER.exactInputSingle(
-            ISwapRouter.ExactInputSingleParams(
-                address(stkAave),
-                address(aave),
-                stkAaveToAaveSwapFee,
-                address(this),
-                now,
-                amountIn, // wei
-                minOut,
-                0
-            )
+        IUni router = swapRouter == SwapRouter.Spooky
+            ? SPOOKY_V2_ROUTER
+            : SPIRIT_V2_ROUTER;
+        router.swapExactTokensForTokens(
+            amountIn,
+            minOut,
+            getTokenOutPathV2(address(geist), address(want)),
+            address(this),
+            now
         );
     }
 

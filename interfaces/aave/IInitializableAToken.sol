@@ -2,7 +2,6 @@
 pragma solidity 0.6.12;
 
 import {ILendingPool} from "./ILendingPool.sol";
-import {IAaveIncentivesController} from "./IAaveIncentivesController.sol";
 
 /**
  * @title IInitializableAToken
@@ -46,7 +45,7 @@ interface IInitializableAToken {
         ILendingPool pool,
         address treasury,
         address underlyingAsset,
-        IAaveIncentivesController incentivesController,
+        address incentivesController,
         uint8 aTokenDecimals,
         string calldata aTokenName,
         string calldata aTokenSymbol,

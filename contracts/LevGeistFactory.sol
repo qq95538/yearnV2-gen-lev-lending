@@ -4,7 +4,7 @@ pragma experimental ABIEncoderV2;
 
 import "./Strategy.sol";
 
-contract LevAaveFactory {
+contract LevGeistFactory {
     address public immutable original;
 
     event Cloned(address indexed clone);
@@ -32,7 +32,7 @@ contract LevAaveFactory {
             );
     }
 
-    function cloneLevAave(address _vault)
+    function cloneLevGeist(address _vault)
         external
         returns (address payable newStrategy)
     {

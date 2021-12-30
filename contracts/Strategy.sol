@@ -15,7 +15,6 @@ import "@openzeppelin/contracts/math/Math.sol";
 import "../interfaces/uniswap/IUni.sol";
 
 import "../interfaces/aave/IProtocolDataProvider.sol";
-import "../interfaces/aave/IStakedAave.sol";
 import "../interfaces/aave/IAToken.sol";
 import "../interfaces/aave/IVariableDebtToken.sol";
 import "../interfaces/aave/ILendingPool.sol";
@@ -55,7 +54,7 @@ contract Strategy is BaseStrategy {
     uint256 private constant DEFAULT_COLLAT_MAX_MARGIN = 0.005 ether;
     uint256 private constant LIQUIDATION_WARNING_THRESHOLD = 0.01 ether;
 
-    uint256 public maxBorrowCollatRatio; // The maximum the aave protocol will let us borrow
+    uint256 public maxBorrowCollatRatio; // The maximum the protocol will let us borrow
     uint256 public targetCollatRatio; // The LTV we are levering up to
     uint256 public maxCollatRatio; // Closest to liquidation we'll risk
 
@@ -70,11 +69,11 @@ contract Strategy is BaseStrategy {
         Spooky,
         Spirit
     }
-    SwapRouter public swapRouter = SwapRouter.Spooky;
+    IUni public router;
 
     bool private alreadyAdjusted; // Signal whether a position adjust was done in prepareReturn
 
-    uint16 private constant referral = 7; // Yearn's aave referral code
+    uint16 private constant referral = 0;
 
     uint256 private constant MAX_BPS = 1e4;
     uint256 private constant BPS_WAD_RATIO = 1e14;
@@ -108,12 +107,11 @@ contract Strategy is BaseStrategy {
         minRatio = 0.005 ether;
         minRewardToSell = 1e15;
 
-        // reward params
-        swapRouter = SwapRouter.Spooky;
+        router = SPOOKY_V2_ROUTER;
 
         alreadyAdjusted = false;
 
-        // Set aave tokens
+        // Set lending+borrowing tokens
         (address _aToken, , address _debtToken) = protocolDataProvider
             .getReserveTokensAddresses(address(want));
         aToken = IAToken(_aToken);
@@ -129,7 +127,7 @@ contract Strategy is BaseStrategy {
 
         DECIMALS = 10**vault.decimals();
 
-        // approve spend aave spend
+        // approve spend protocol spend
         approveMaxSpend(address(want), address(lendingPool));
         approveMaxSpend(address(aToken), address(lendingPool));
 
@@ -180,7 +178,9 @@ contract Strategy is BaseStrategy {
         require(
             _swapRouter == SwapRouter.Spooky || _swapRouter == SwapRouter.Spirit
         );
-        swapRouter = _swapRouter;
+        router = _swapRouter == SwapRouter.Spooky
+            ? SPOOKY_V2_ROUTER
+            : SPIRIT_V2_ROUTER;
         minRewardToSell = _minRewardToSell;
     }
 
@@ -209,7 +209,7 @@ contract Strategy is BaseStrategy {
 
         uint256[] memory rewards = incentivesController.claimableReward(
             address(this),
-            getAaveAssets()
+            getAssets()
         );
         for (uint8 i = 0; i < rewards.length; i++) {
             rewardBalance += rewards[i];
@@ -373,7 +373,7 @@ contract Strategy is BaseStrategy {
             //harvest takes priority
             return false;
         }
-        // pull the liquidation liquidationThreshold from aave to be extra safu
+        // pull the liquidation liquidationThreshold from protocol to be extra safu
         (, uint256 liquidationThreshold) = getProtocolCollatRatios(
             address(want)
         );
@@ -428,7 +428,7 @@ contract Strategy is BaseStrategy {
     function _claimAndSellRewards() internal returns (uint256) {
         IGeistIncentivesController _incentivesController = incentivesController;
 
-        _incentivesController.claim(address(this), getAaveAssets());
+        _incentivesController.claim(address(this), getAssets());
 
         // Exit with 50% penalty
         IMultiFeeDistribution(_incentivesController.rewardMinter()).exit();
@@ -638,10 +638,6 @@ contract Strategy is BaseStrategy {
             return amount;
         }
 
-        // KISS: just use a v2 router for quotes which aren't used in critical logic
-        IUni router = swapRouter == SwapRouter.Spooky
-            ? SPOOKY_V2_ROUTER
-            : SPIRIT_V2_ROUTER;
         uint256[] memory amounts = router.getAmountsOut(
             amount,
             getTokenOutPathV2(token, address(want))
@@ -681,9 +677,6 @@ contract Strategy is BaseStrategy {
         if (amountIn == 0) {
             return;
         }
-        IUni router = swapRouter == SwapRouter.Spooky
-            ? SPOOKY_V2_ROUTER
-            : SPIRIT_V2_ROUTER;
         router.swapExactTokensForTokens(
             amountIn,
             minOut,
@@ -693,7 +686,7 @@ contract Strategy is BaseStrategy {
         );
     }
 
-    function getAaveAssets() internal view returns (address[] memory assets) {
+    function getAssets() internal view returns (address[] memory assets) {
         assets = new address[](2);
         assets[0] = address(aToken);
         assets[1] = address(debtToken);

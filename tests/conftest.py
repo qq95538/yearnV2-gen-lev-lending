@@ -64,7 +64,7 @@ token_addresses = {
         # "WETH",  # WETH
         # 'LINK', # LINK
         # 'USDT', # USDT
-        "DAI",  # DAI
+        # "DAI",  # DAI
         "USDC",  # USDC
     ],
     scope="session",
@@ -157,8 +157,8 @@ def vault(pm, gov, rewards, guardian, management, token):
 
 
 @pytest.fixture(scope="function")
-def factory(strategist, vault, LevAaveFactory):
-    yield strategist.deploy(LevAaveFactory, vault)
+def factory(strategist, vault, LevGeistFactory):
+    yield strategist.deploy(LevGeistFactory, vault)
 
 
 @pytest.fixture(scope="function")

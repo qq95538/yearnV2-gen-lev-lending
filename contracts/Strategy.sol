@@ -27,7 +27,7 @@ contract Strategy is BaseStrategy {
     using Address for address;
     using SafeMath for uint256;
 
-    // AAVE protocol address
+    // protocol address
     IProtocolDataProvider private constant protocolDataProvider =
         IProtocolDataProvider(0xf3B0611e2E4D2cd6aB4bb3e01aDe211c3f42A8C3);
     IGeistIncentivesController private constant incentivesController =
@@ -59,7 +59,6 @@ contract Strategy is BaseStrategy {
     uint256 public maxCollatRatio; // Closest to liquidation we'll risk
 
     uint8 public maxIterations;
-    bool public withdrawCheck;
 
     uint256 public minWant;
     uint256 public minRatio;
@@ -100,7 +99,6 @@ contract Strategy is BaseStrategy {
 
         // initialize operational state
         maxIterations = 10;
-        withdrawCheck = false;
 
         // mins
         minWant = 100;
@@ -153,10 +151,6 @@ contract Strategy is BaseStrategy {
         targetCollatRatio = _targetCollatRatio;
         maxCollatRatio = _maxCollatRatio;
         maxBorrowCollatRatio = _maxBorrowCollatRatio;
-    }
-
-    function setWithdrawCheck(bool _withdrawCheck) external onlyVaultManagers {
-        withdrawCheck = _withdrawCheck;
     }
 
     function setMinsAndMaxs(
@@ -236,9 +230,11 @@ contract Strategy is BaseStrategy {
         // account for profit / losses
         uint256 totalDebt = vault.strategies(address(this)).totalDebt;
 
+        uint256 _balanceOfWant = balanceOfWant();
+
         // Assets immediately convertable to want only
         uint256 supply = getCurrentSupply();
-        uint256 totalAssets = balanceOfWant().add(supply);
+        uint256 totalAssets = _balanceOfWant.add(supply);
 
         if (totalDebt > totalAssets) {
             // we have losses
@@ -249,10 +245,10 @@ contract Strategy is BaseStrategy {
         }
 
         // free funds to repay debt + profit to the strategy
-        uint256 amountAvailable = balanceOfWant();
+        uint256 amountAvailable = _balanceOfWant;
         uint256 amountRequired = _debtOutstanding.add(_profit);
 
-        if (amountRequired > amountAvailable) {
+        if (_debtOutstanding != 0 && amountRequired > amountAvailable) {
             // we need to free funds
             // we dismiss losses here, they cannot be generated from withdrawal
             // but it is possible for the strategy to unwind full position
@@ -285,8 +281,8 @@ contract Strategy is BaseStrategy {
         } else {
             _debtPayment = _debtOutstanding;
             // profit remains unchanged unless there is not enough to pay it
-            if (amountRequired.sub(_debtPayment) < _profit) {
-                _profit = amountRequired.sub(_debtPayment);
+            if (amountAvailable.sub(_debtPayment) < _profit) {
+                _profit = amountAvailable.sub(_debtPayment);
             }
         }
     }
@@ -303,9 +299,10 @@ contract Strategy is BaseStrategy {
             wantBalance > _debtOutstanding &&
             wantBalance.sub(_debtOutstanding) > minWant
         ) {
-            _depositCollateral(wantBalance.sub(_debtOutstanding));
+            uint256 amountToDeposit = wantBalance.sub(_debtOutstanding);
+            _depositCollateral(amountToDeposit);
             // we update the value
-            wantBalance = balanceOfWant();
+            wantBalance = wantBalance.sub(amountToDeposit);
         }
         // check current position
         uint256 currentCollatRatio = getCurrentCollatRatio();
@@ -361,10 +358,6 @@ contract Strategy is BaseStrategy {
             }
         } else {
             _liquidatedAmount = _amountNeeded;
-        }
-
-        if (withdrawCheck) {
-            require(_amountNeeded == _liquidatedAmount.add(_loss)); // dev: withdraw safety check
         }
     }
 
@@ -433,7 +426,7 @@ contract Strategy is BaseStrategy {
         // Exit with 50% penalty
         IMultiFeeDistribution(_incentivesController.rewardMinter()).exit();
 
-        // sell AAVE for want
+        // sell reward for want
         uint256 rewardBalance = balanceOfReward();
         if (rewardBalance >= minRewardToSell) {
             _sellRewardForWant(rewardBalance, 0);
@@ -458,6 +451,7 @@ contract Strategy is BaseStrategy {
 
     function _leverMax() internal {
         (uint256 deposits, uint256 borrows) = getCurrentPosition();
+        uint256 wantBalance = balanceOfWant();
 
         // NOTE: decimals should cancel out
         uint256 realSupply = deposits.sub(borrows);
@@ -469,48 +463,46 @@ contract Strategy is BaseStrategy {
             i < maxIterations && totalAmountToBorrow > minWant;
             i++
         ) {
-            totalAmountToBorrow = totalAmountToBorrow.sub(
-                _leverUpStep(totalAmountToBorrow)
+            uint256 amount = totalAmountToBorrow;
+
+            // calculate how much borrow to take
+            //(deposits, borrows) = getCurrentPosition();
+            uint256 canBorrow = getBorrowFromDeposit(
+                deposits.add(wantBalance),
+                maxBorrowCollatRatio
             );
+
+            if (canBorrow <= borrows) {
+                break;
+            }
+            canBorrow = canBorrow.sub(borrows);
+
+            if (canBorrow < amount) {
+                amount = canBorrow;
+            }
+
+            // deposit available want as collateral
+            _depositCollateral(wantBalance);
+
+            // borrow available amount
+            _borrowWant(amount);
+
+            // track ourselves to save gas
+            deposits = deposits.add(wantBalance);
+            borrows = borrows.add(amount);
+            wantBalance = amount;
+
+            totalAmountToBorrow = totalAmountToBorrow.sub(amount);
         }
-    }
-
-    function _leverUpStep(uint256 amount) internal returns (uint256) {
-        if (amount == 0) {
-            return 0;
-        }
-
-        uint256 wantBalance = balanceOfWant();
-
-        // calculate how much borrow can I take
-        (uint256 deposits, uint256 borrows) = getCurrentPosition();
-        uint256 canBorrow = getBorrowFromDeposit(
-            deposits.add(wantBalance),
-            maxBorrowCollatRatio
-        );
-
-        if (canBorrow <= borrows) {
-            return 0;
-        }
-        canBorrow = canBorrow.sub(borrows);
-
-        if (canBorrow < amount) {
-            amount = canBorrow;
-        }
-
-        // deposit available want as collateral
-        _depositCollateral(wantBalance);
-
-        // borrow available amount
-        _borrowWant(amount);
-
-        return amount;
     }
 
     function _leverDownTo(uint256 newAmountBorrowed, uint256 currentBorrowed)
         internal
     {
+        (uint256 deposits, uint256 borrows) = getCurrentPosition();
+
         if (currentBorrowed > newAmountBorrowed) {
+            uint256 wantBalance = balanceOfWant();
             uint256 totalRepayAmount = currentBorrowed.sub(newAmountBorrowed);
 
             uint256 _maxCollatRatio = maxCollatRatio;
@@ -520,19 +512,28 @@ contract Strategy is BaseStrategy {
                 i < maxIterations && totalRepayAmount > minWant;
                 i++
             ) {
-                _withdrawExcessCollateral(_maxCollatRatio);
+                uint256 withdrawn = _withdrawExcessCollateral(
+                    _maxCollatRatio,
+                    deposits,
+                    borrows
+                );
+                wantBalance = wantBalance.add(withdrawn); // track ourselves to save gas
                 uint256 toRepay = totalRepayAmount;
-                uint256 wantBalance = balanceOfWant();
                 if (toRepay > wantBalance) {
                     toRepay = wantBalance;
                 }
                 uint256 repaid = _repayWant(toRepay);
+
+                // track ourselves to save gas
+                deposits = deposits.sub(withdrawn);
+                wantBalance = wantBalance.sub(repaid);
+                borrows = borrows.sub(repaid);
+
                 totalRepayAmount = totalRepayAmount.sub(repaid);
             }
         }
 
         // deposit back to get targetCollatRatio (we always need to leave this in this ratio)
-        (uint256 deposits, uint256 borrows) = getCurrentPosition();
         uint256 _targetCollatRatio = targetCollatRatio;
         uint256 targetDeposit = getDepositFromBorrow(
             borrows,
@@ -544,15 +545,15 @@ contract Strategy is BaseStrategy {
                 _depositCollateral(Math.min(toDeposit, balanceOfWant()));
             }
         } else {
-            _withdrawExcessCollateral(_targetCollatRatio);
+            _withdrawExcessCollateral(_targetCollatRatio, deposits, borrows);
         }
     }
 
-    function _withdrawExcessCollateral(uint256 collatRatio)
-        internal
-        returns (uint256 amount)
-    {
-        (uint256 deposits, uint256 borrows) = getCurrentPosition();
+    function _withdrawExcessCollateral(
+        uint256 collatRatio,
+        uint256 deposits,
+        uint256 borrows
+    ) internal returns (uint256 amount) {
         uint256 theoDeposits = getDepositFromBorrow(borrows, collatRatio);
         if (deposits > theoDeposits) {
             uint256 toWithdraw = deposits.sub(theoDeposits);
@@ -560,27 +561,24 @@ contract Strategy is BaseStrategy {
         }
     }
 
-    function _depositCollateral(uint256 amount) internal returns (uint256) {
-        if (amount == 0) return 0;
+    function _depositCollateral(uint256 amount) internal {
+        if (amount == 0) return;
         lendingPool.deposit(address(want), amount, address(this), referral);
-        return amount;
+    }
+
+    function _borrowWant(uint256 amount) internal {
+        if (amount == 0) return;
+        lendingPool.borrow(address(want), amount, 2, referral, address(this));
     }
 
     function _withdrawCollateral(uint256 amount) internal returns (uint256) {
         if (amount == 0) return 0;
-        lendingPool.withdraw(address(want), amount, address(this));
-        return amount;
+        return lendingPool.withdraw(address(want), amount, address(this));
     }
 
     function _repayWant(uint256 amount) internal returns (uint256) {
         if (amount == 0) return 0;
         return lendingPool.repay(address(want), amount, 2, address(this));
-    }
-
-    function _borrowWant(uint256 amount) internal returns (uint256) {
-        if (amount == 0) return 0;
-        lendingPool.borrow(address(want), amount, 2, referral, address(this));
-        return amount;
     }
 
     // INTERNAL VIEWS

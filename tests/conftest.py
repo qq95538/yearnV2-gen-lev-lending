@@ -50,7 +50,7 @@ def keeper(accounts):
 
 token_addresses = {
     "WBTC": "0x321162Cd933E2Be498Cd2267a90534A804051b11",  # WBTC
-    "WETH": "0x74b23882a30290451A17c44f4F05243b6b58C76d",  # WETH
+    "ETH": "0x74b23882a30290451A17c44f4F05243b6b58C76d",  # WETH
     "DAI": "0x8D11eC38a3EB5E956B052f67Da8Bdc9bef8Abf3E",  # DAI
     "USDC": "0x04068DA6C83AFCFA0e13ba15A6696662335D5B75",  # USDC
     "WFTM": "0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83",  # WFTM
@@ -60,12 +60,10 @@ token_addresses = {
 @pytest.fixture(
     params=[
         # "WBTC",  # WBTC
-        # "YFI",  # YFI
-        # "WETH",  # WETH
-        # 'LINK', # LINK
-        # 'USDT', # USDT
-        # "DAI",  # DAI
-        "USDC",  # USDC
+        # "ETH",  # ETH
+        "DAI",  # DAI
+        # "USDC",  # USDC
+        # "WFTM", # WFTM
     ],
     scope="session",
     autouse=True,
@@ -76,9 +74,9 @@ def token(request):
 
 whale_addresses = {
     "WBTC": "0x4565DC3Ef685E4775cdF920129111DdF43B9d882",
-    "WETH": "0xC772BA6C2c28859B7a0542FAa162a56115dDCE25",
-    "USDC": "0x2dd7C9371965472E5A5fD28fbE165007c61439E1",
+    "ETH": "0xC772BA6C2c28859B7a0542FAa162a56115dDCE25",
     "DAI": "0x8CFA87aD11e69E071c40D58d2d1a01F862aE01a8",
+    "USDC": "0x2dd7C9371965472E5A5fD28fbE165007c61439E1",
     "WFTM": "0x5AA53f03197E08C4851CAD8C92c7922DA5857E5d",
 }
 
@@ -90,10 +88,10 @@ def token_whale(token):
 
 token_prices = {
     "WBTC": 50_000,
-    "WETH": 4_000,
+    "ETH": 4_000,
     "YFI": 30_000,
-    "USDC": 1,
     "DAI": 1,
+    "USDC": 1,
     "WFTM": 2,
 }
 

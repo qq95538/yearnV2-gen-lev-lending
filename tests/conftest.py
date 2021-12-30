@@ -10,12 +10,12 @@ def shared_setup(fn_isolation):
 
 @pytest.fixture(scope="session")
 def gov(accounts):
-    yield accounts.at("0xFEB4acf3df3cDEA7399794D0869ef76A6EfAff52", force=True)
+    yield accounts.at("0xC0E2830724C946a6748dDFE09753613cd38f6767", force=True)
 
 
 @pytest.fixture(scope="session")
 def strat_ms(accounts):
-    yield accounts.at("0x16388463d60FFE0661Cf7F1f31a7D658aC790ff7", force=True)
+    yield accounts.at("0x72a34AbafAB09b15E7191822A679f28E067C4a16", force=True)
 
 
 @pytest.fixture(scope="session")
@@ -34,8 +34,8 @@ def guardian(accounts):
 
 
 @pytest.fixture(scope="session")
-def management(accounts):
-    yield accounts[3]
+def management(strat_ms):
+    yield strat_ms  # accounts[3]
 
 
 @pytest.fixture(scope="session")
@@ -48,31 +48,24 @@ def keeper(accounts):
     yield accounts[5]
 
 
-@pytest.fixture(autouse=True)
-def FlashMaintLibrary(FlashMintLib, gov):
-    yield gov.deploy(FlashMintLib)
-
-
 token_addresses = {
-    "WBTC": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",  # WBTC
-    "YFI": "0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e",  # YFI
-    "WETH": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH
-    "LINK": "0x514910771AF9Ca656af840dff83E8264EcF986CA",  # LINK
-    "USDT": "0xdAC17F958D2ee523a2206206994597C13D831ec7",  # USDT
-    "DAI": "0x6B175474E89094C44Da98b954EedeAC495271d0F",  # DAI
-    "USDC": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",  # USDC
+    "WBTC": "0x321162Cd933E2Be498Cd2267a90534A804051b11",  # WBTC
+    "WETH": "0x74b23882a30290451A17c44f4F05243b6b58C76d",  # WETH
+    "DAI": "0x8D11eC38a3EB5E956B052f67Da8Bdc9bef8Abf3E",  # DAI
+    "USDC": "0x04068DA6C83AFCFA0e13ba15A6696662335D5B75",  # USDC
+    "WFTM": "0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83",  # WFTM
 }
 
 # TODO: uncomment those tokens you want to test as want
 @pytest.fixture(
     params=[
-        #"WBTC",  # WBTC
-        #"YFI",  # YFI
-        "WETH",  # WETH
+        # "WBTC",  # WBTC
+        # "YFI",  # YFI
+        # "WETH",  # WETH
         # 'LINK', # LINK
         # 'USDT', # USDT
-        #"DAI",  # DAI
-        # "USDC",  # USDC
+        "DAI",  # DAI
+        "USDC",  # USDC
     ],
     scope="session",
     autouse=True,
@@ -82,13 +75,11 @@ def token(request):
 
 
 whale_addresses = {
-    "WBTC": "0x28c6c06298d514db089934071355e5743bf21d60",
-    "WETH": "0x28c6c06298d514db089934071355e5743bf21d60",
-    "LINK": "0x28c6c06298d514db089934071355e5743bf21d60",
-    "YFI": "0x28c6c06298d514db089934071355e5743bf21d60",
-    "USDT": "0x47ac0Fb4F2D84898e4D9E7b4DaB3C24507a6D503",
-    "USDC": "0x47ac0Fb4F2D84898e4D9E7b4DaB3C24507a6D503",
-    "DAI": "0x47ac0Fb4F2D84898e4D9E7b4DaB3C24507a6D503",
+    "WBTC": "0x4565DC3Ef685E4775cdF920129111DdF43B9d882",
+    "WETH": "0xC772BA6C2c28859B7a0542FAa162a56115dDCE25",
+    "USDC": "0x2dd7C9371965472E5A5fD28fbE165007c61439E1",
+    "DAI": "0x8CFA87aD11e69E071c40D58d2d1a01F862aE01a8",
+    "WFTM": "0x5AA53f03197E08C4851CAD8C92c7922DA5857E5d",
 }
 
 
@@ -98,13 +89,12 @@ def token_whale(token):
 
 
 token_prices = {
-    "WBTC": 60_000,
+    "WBTC": 50_000,
     "WETH": 4_000,
-    "LINK": 20,
-    "YFI": 35_000,
-    "USDT": 1,
+    "YFI": 30_000,
     "USDC": 1,
     "DAI": 1,
+    "WFTM": 2,
 }
 
 
@@ -135,15 +125,23 @@ def big_amount(token, token_whale, user):
 
 
 @pytest.fixture
-def weth():
-    token_address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-    yield Contract(token_address)
+def wftm():
+    yield Contract("0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83")
+
+
+@pytest.fixture
+def weth(wftm):
+    yield wftm
+    # token_address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+    # yield Contract(token_address)
 
 
 @pytest.fixture
 def weth_amount(user, weth):
     weth_amount = 10 ** weth.decimals()
-    user.transfer(weth, weth_amount)
+    weth.transfer(
+        user, weth_amount, {"from": "0x5AA53f03197E08C4851CAD8C92c7922DA5857E5d"}
+    )
     yield weth_amount
 
 
@@ -156,16 +154,6 @@ def vault(pm, gov, rewards, guardian, management, token):
     vault.setManagement(management, {"from": gov})
     vault.setManagementFee(0, {"from": gov})
     yield vault
-
-
-@pytest.fixture(scope="session")
-def registry():
-    yield Contract("0x50c1a2eA0a861A967D9d0FFE2AE4012c2E053804")
-
-
-@pytest.fixture(scope="session")
-def live_vault(registry, token):
-    yield registry.latestVault(token)
 
 
 @pytest.fixture(scope="function")
@@ -185,22 +173,9 @@ def strategy(chain, keeper, vault, factory, gov, strategist, Strategy):
 
 @pytest.fixture()
 def enable_healthcheck(strategy, gov):
-    strategy.setHealthCheck("0xDDCea799fF1699e98EDF118e0629A974Df7DF012", {"from": gov})
+    strategy.setHealthCheck("0xf13Cd6887C62B5beC145e30c38c4938c5E627fe0", {"from": gov})
     strategy.setDoHealthCheck(True, {"from": gov})
     yield True
-
-
-@pytest.fixture(
-    params=[
-        True,
-        False,
-    ],
-    scope="function",
-)
-def flashloans_active(request, strategy, gov):
-    is_active = request.param
-    strategy.setIsFlashMintActive(is_active, {"from": gov})
-    yield is_active
 
 
 @pytest.fixture(scope="session", autouse=True)

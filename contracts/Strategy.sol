@@ -100,7 +100,7 @@ contract Strategy is BaseStrategy {
         require(address(aToken) == address(0));
 
         // initialize operational state
-        maxIterations = 6;
+        maxIterations = 10;
         withdrawCheck = false;
 
         // mins
@@ -123,9 +123,7 @@ contract Strategy is BaseStrategy {
         (uint256 ltv, uint256 liquidationThreshold) = getProtocolCollatRatios(
             address(want)
         );
-        targetCollatRatio = liquidationThreshold.sub(
-            DEFAULT_COLLAT_TARGET_MARGIN
-        );
+        targetCollatRatio = ltv.sub(DEFAULT_COLLAT_TARGET_MARGIN);
         maxCollatRatio = liquidationThreshold.sub(DEFAULT_COLLAT_MAX_MARGIN);
         maxBorrowCollatRatio = ltv.sub(DEFAULT_COLLAT_MAX_MARGIN);
 
@@ -209,7 +207,10 @@ contract Strategy is BaseStrategy {
     function estimatedRewardsInWant() public view returns (uint256) {
         uint256 rewardBalance = 0;
 
-        uint256[] memory rewards = incentivesController.claimableReward(address(this), getAaveAssets());
+        uint256[] memory rewards = incentivesController.claimableReward(
+            address(this),
+            getAaveAssets()
+        );
         for (uint8 i = 0; i < rewards.length; i++) {
             rewardBalance += rewards[i];
         }

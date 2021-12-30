@@ -13,7 +13,7 @@ def generate_profit(strategy, token_whale, amount):
     lp = interface.ILendingPool(
         interface.ILendingPoolAddressesProvider(
             interface.IProtocolDataProvider(
-                "0x057835Ad21a177dbdd3090bB1CAE03EaCF78Fc6d"
+                "0xf3B0611e2E4D2cd6aB4bb3e01aDe211c3f42A8C3"
             ).ADDRESSES_PROVIDER()
         ).getLendingPool()
     )

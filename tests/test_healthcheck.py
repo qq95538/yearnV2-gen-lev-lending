@@ -1,6 +1,6 @@
 from utils import actions
 import brownie
-from brownie import Contract
+from brownie import Contract, ZERO_ADDRESS
 
 
 def test_healthcheck(
@@ -11,7 +11,7 @@ def test_healthcheck(
     actions.user_deposit(user, vault, token, amount)
 
     assert strategy.doHealthCheck()
-    assert strategy.healthCheck() == Contract("health.ychad.eth")
+    assert strategy.healthCheck() != ZERO_ADDRESS
 
     chain.sleep(1)
     strategy.harvest({"from": strategist})

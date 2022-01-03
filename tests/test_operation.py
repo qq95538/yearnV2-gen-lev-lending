@@ -299,6 +299,8 @@ def test_sweep(gov, vault, strategy, token, user, amount, weth, weth_amount):
     with brownie.reverts("!shares"):
         strategy.sweep(vault.address, {"from": gov})
 
+    if token.address == weth.address:
+        return
     before_balance = weth.balanceOf(gov)
     weth.transfer(strategy, weth_amount, {"from": user})
     assert weth.address != strategy.want()

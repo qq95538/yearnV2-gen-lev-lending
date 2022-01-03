@@ -26,9 +26,6 @@ def test_migration(
     pre_want_balance = token.balanceOf(strategy)
 
     new_strategy = strategist.deploy(Strategy, vault)
-    weth.transfer(
-        new_strategy, 1e6, {"from": "0xBA12222222228d8Ba445958a75a0704d566BF2C8"}
-    )
 
     # mirgration with more than dust reverts, there is no way to transfer the debt position
     with brownie.reverts():

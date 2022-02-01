@@ -5,8 +5,6 @@ pragma experimental ABIEncoderV2;
 
 import {BaseStrategy} from "@yearn/yearn-vaults/contracts/BaseStrategy.sol";
 import {
-    SafeERC20,
-    SafeMath,
     IERC20,
     Address
 } from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
@@ -24,9 +22,7 @@ import "../interfaces/geist/IGeistIncentivesController.sol";
 import "../interfaces/geist/IMultiFeeDistribution.sol";
 
 contract Strategy is BaseStrategy {
-    using SafeERC20 for IERC20;
     using Address for address;
-    using SafeMath for uint256;
 
     // protocol address
     IProtocolDataProvider private constant protocolDataProvider =
@@ -95,8 +91,6 @@ contract Strategy is BaseStrategy {
     }
 
     function _initializeThis() internal {
-        require(address(aToken) == address(0));
-
         // initialize operational state
         maxIterations = 10;
 
@@ -112,6 +106,7 @@ contract Strategy is BaseStrategy {
         // Set lending+borrowing tokens
         (address _aToken, , address _debtToken) =
             protocolDataProvider.getReserveTokensAddresses(address(want));
+        require(_aToken != address(0));
         aToken = IAToken(_aToken);
         debtToken = IVariableDebtToken(_debtToken);
 

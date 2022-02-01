@@ -10,16 +10,8 @@ def user_deposit(user, vault, token, amount):
 
 
 def generate_profit(strategy, token_whale, amount):
-    lp = interface.ILendingPool(
-        interface.ILendingPoolAddressesProvider(
-            interface.IProtocolDataProvider(
-                "0xf3B0611e2E4D2cd6aB4bb3e01aDe211c3f42A8C3"
-            ).ADDRESSES_PROVIDER()
-        ).getLendingPool()
-    )
     token = Contract(strategy.want())
-    token.approve(lp, 2 ** 256 - 1, {"from": token_whale})
-    lp.deposit(strategy.want(), amount, strategy, 0, {"from": token_whale})
+    token.transfer(strategy, amount, {"from": token_whale})
     return
 
 

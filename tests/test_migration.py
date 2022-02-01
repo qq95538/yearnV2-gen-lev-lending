@@ -43,7 +43,9 @@ def test_migration(
         == amount
     )
 
-    assert pre_want_balance == token.balanceOf(new_strategy)
+    assert pytest.approx(pre_want_balance, rel=RELATIVE_APPROX) == token.balanceOf(
+        new_strategy
+    )
 
     # check that harvest work as expected
     new_strategy.harvest({"from": gov})

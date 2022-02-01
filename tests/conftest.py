@@ -1,11 +1,25 @@
 import pytest
 from brownie import config, Contract, network
+import requests
 
 # Function scoped isolation fixture to enable xdist.
 # Snapshots the chain before each test and reverts after test completion.
 @pytest.fixture(scope="function", autouse=True)
 def shared_setup(fn_isolation):
     pass
+
+
+# @pytest.fixture(scope="function", autouse=True)
+# def tenderly_fork(web3):
+#    fork_base_url = "https://simulate.yearn.network/fork"
+#    payload = {"network_id": "250"}
+#    resp = requests.post(fork_base_url, headers={}, json=payload)
+#    fork_id = resp.json()["simulation_fork"]["id"]
+#    fork_rpc_url = f"https://rpc.tenderly.co/fork/{fork_id}"
+#    print(fork_rpc_url)
+#    tenderly_provider = web3.HTTPProvider(fork_rpc_url, {"timeout": 600})
+#    web3.provider = tenderly_provider
+#    print(f"https://dashboard.tenderly.co/yearn/yearn-web/fork/{fork_id}")
 
 
 @pytest.fixture(scope="session")
@@ -49,21 +63,23 @@ def keeper(accounts):
 
 
 token_addresses = {
-    "WBTC": "0x321162Cd933E2Be498Cd2267a90534A804051b11",  # WBTC
+    "BTC": "0x321162Cd933E2Be498Cd2267a90534A804051b11",  # WBTC
     "ETH": "0x74b23882a30290451A17c44f4F05243b6b58C76d",  # WETH
     "DAI": "0x8D11eC38a3EB5E956B052f67Da8Bdc9bef8Abf3E",  # DAI
     "USDC": "0x04068DA6C83AFCFA0e13ba15A6696662335D5B75",  # USDC
     "WFTM": "0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83",  # WFTM
+    "MIM": "0x82f0B8B456c1A451378467398982d4834b6829c1",  # MIM
 }
 
 # TODO: uncomment those tokens you want to test as want
 @pytest.fixture(
     params=[
-        # "WBTC",  # WBTC
-        # "ETH",  # ETH
-        "DAI",  # DAI
+        # "BTC",   # WBTC
+        # "ETH",   # ETH
+        # "DAI",   # DAI
         # "USDC",  # USDC
         "WFTM",  # WFTM
+        # "MIM",   # MIM
     ],
     scope="session",
     autouse=True,
@@ -73,11 +89,12 @@ def token(request):
 
 
 whale_addresses = {
-    "WBTC": "0x4565DC3Ef685E4775cdF920129111DdF43B9d882",
+    "BTC": "0x4565DC3Ef685E4775cdF920129111DdF43B9d882",
     "ETH": "0xC772BA6C2c28859B7a0542FAa162a56115dDCE25",
     "DAI": "0x8CFA87aD11e69E071c40D58d2d1a01F862aE01a8",
     "USDC": "0x2dd7C9371965472E5A5fD28fbE165007c61439E1",
     "WFTM": "0x5AA53f03197E08C4851CAD8C92c7922DA5857E5d",
+    "MIM": "0x2dd7C9371965472E5A5fD28fbE165007c61439E1",
 }
 
 
@@ -87,12 +104,13 @@ def token_whale(token):
 
 
 token_prices = {
-    "WBTC": 50_000,
-    "ETH": 4_000,
+    "BTC": 40_000,
+    "ETH": 3_500,
     "YFI": 30_000,
     "DAI": 1,
     "USDC": 1,
-    "WFTM": 2,
+    "WFTM": 3,
+    "MIM": 1,
 }
 
 

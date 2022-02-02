@@ -9,19 +9,6 @@ def shared_setup(fn_isolation):
     pass
 
 
-# @pytest.fixture(scope="function", autouse=True)
-# def tenderly_fork(web3):
-#    fork_base_url = "https://simulate.yearn.network/fork"
-#    payload = {"network_id": "250"}
-#    resp = requests.post(fork_base_url, headers={}, json=payload)
-#    fork_id = resp.json()["simulation_fork"]["id"]
-#    fork_rpc_url = f"https://rpc.tenderly.co/fork/{fork_id}"
-#    print(fork_rpc_url)
-#    tenderly_provider = web3.HTTPProvider(fork_rpc_url, {"timeout": 600})
-#    web3.provider = tenderly_provider
-#    print(f"https://dashboard.tenderly.co/yearn/yearn-web/fork/{fork_id}")
-
-
 @pytest.fixture(scope="session")
 def gov(accounts):
     yield accounts.at("0xC0E2830724C946a6748dDFE09753613cd38f6767", force=True)

@@ -95,7 +95,7 @@ def test_manual_deleverage_to_zero(
 
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
-    chain.sleep(6 * 3600)
+    chain.sleep(1 * 3600)
 
     utils.strategy_status(vault, strategy)
 

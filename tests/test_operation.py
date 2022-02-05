@@ -18,6 +18,12 @@ def test_operation(
 
     utils.strategy_status(vault, strategy)
 
+    assert token.balanceOf(strategy) <= strategy.minWant()
+    assert (
+        pytest.approx(strategy.getCurrentCollatRatio(), rel=RELATIVE_APPROX)
+        == strategy.targetCollatRatio()
+    )
+
     # tend()
     strategy.tend({"from": strategist})
 
@@ -186,6 +192,11 @@ def test_increase_debt_ratio(
         pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX)
         == part_amount
     )
+    assert token.balanceOf(strategy) <= strategy.minWant()
+    assert (
+        pytest.approx(strategy.getCurrentCollatRatio(), rel=RELATIVE_APPROX)
+        == strategy.targetCollatRatio()
+    )
 
     vault.updateStrategyDebtRatio(strategy.address, 10_000, {"from": gov})
     chain.sleep(1)
@@ -194,6 +205,11 @@ def test_increase_debt_ratio(
     utils.strategy_status(vault, strategy)
 
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
+    assert token.balanceOf(strategy) <= strategy.minWant()
+    assert (
+        pytest.approx(strategy.getCurrentCollatRatio(), rel=RELATIVE_APPROX)
+        == strategy.targetCollatRatio()
+    )
 
 
 @pytest.mark.parametrize(
@@ -220,6 +236,11 @@ def test_decrease_debt_ratio(
     utils.strategy_status(vault, strategy)
 
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
+    assert token.balanceOf(strategy) <= strategy.minWant()
+    assert (
+        pytest.approx(strategy.getCurrentCollatRatio(), rel=RELATIVE_APPROX)
+        == strategy.targetCollatRatio()
+    )
 
     # Two harvests needed to unlock
     vault.updateStrategyDebtRatio(strategy.address, ending_debt_ratio, {"from": gov})
@@ -232,6 +253,44 @@ def test_decrease_debt_ratio(
     assert (
         pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX)
         == part_amount
+    )
+    assert token.balanceOf(strategy) <= strategy.minWant()
+    assert (
+        pytest.approx(strategy.getCurrentCollatRatio(), rel=RELATIVE_APPROX)
+        == strategy.targetCollatRatio()
+    )
+
+
+@pytest.mark.parametrize("percent_default_target", [0.1, 0.25, 0.5, 0.75])
+def test_lower_ltvs(
+    token,
+    vault,
+    strategy,
+    user,
+    strategist,
+    gov,
+    amount,
+    percent_default_target,
+    RELATIVE_APPROX,
+):
+    # Deposit to the vault and harvest
+    actions.user_deposit(user, vault, token, amount)
+    utils.sleep(1)
+    strategy.setCollateralTargets(
+        strategy.targetCollatRatio() * percent_default_target,
+        strategy.maxCollatRatio(),
+        strategy.maxBorrowCollatRatio(),
+        {"from": gov},
+    )
+    strategy.harvest({"from": strategist})
+
+    utils.strategy_status(vault, strategy)
+
+    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
+    assert token.balanceOf(strategy) <= strategy.minWant()
+    assert (
+        pytest.approx(strategy.getCurrentCollatRatio(), rel=RELATIVE_APPROX)
+        == strategy.targetCollatRatio()
     )
 
 

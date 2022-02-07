@@ -96,7 +96,7 @@ token_prices = {
     "YFI": 30_000,
     "DAI": 1,
     "USDC": 1,
-    "WFTM": 1,
+    "WFTM": 2,
     "MIM": 1,
 }
 

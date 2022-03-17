@@ -57,11 +57,11 @@ contract Strategy is BaseStrategy {
     uint256 public targetCollatRatio; // The LTV we are levering up to
     uint256 public maxCollatRatio; // Closest to liquidation we'll risk
 
-    uint8 public maxIterations;
-
     uint256 public minWant;
     uint256 public minRatio;
     uint256 public minRewardToSell;
+
+    uint8 public maxIterations;
 
     enum SwapRouter {Spooky, Spirit}
     IUni public router;
@@ -445,14 +445,16 @@ contract Strategy is BaseStrategy {
         (uint256 deposits, uint256 borrows) = getCurrentPosition();
         uint256 wantBalance = balanceOfWant();
 
-        // NOTE: decimals should cancel out
         uint256 realSupply = deposits.sub(borrows);
         uint256 newBorrow = getBorrowFromSupply(realSupply, targetCollatRatio);
         uint256 totalAmountToBorrow = newBorrow.sub(borrows);
 
+        uint8 _maxIterations = maxIterations;
+        uint256 _minWant = minWant;
+
         for (
             uint8 i = 0;
-            i < maxIterations && totalAmountToBorrow > minWant;
+            i < _maxIterations && totalAmountToBorrow > _minWant;
             i++
         ) {
             uint256 amount = totalAmountToBorrow;
@@ -486,6 +488,10 @@ contract Strategy is BaseStrategy {
             wantBalance = amount;
 
             totalAmountToBorrow = totalAmountToBorrow.sub(amount);
+        }
+
+        if (wantBalance >= minWant) {
+            _depositCollateral(wantBalance);
         }
     }
 

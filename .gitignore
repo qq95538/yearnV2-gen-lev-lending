@@ -14,3 +14,4 @@ pyvenv.cfg
 # Node/npm
 node_modules/
 
+brownie-config.yml
